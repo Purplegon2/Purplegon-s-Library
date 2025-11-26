@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Typing Quotes Game – Wikipedia</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      background: #ffffff;
+      padding: 20px 24px 28px;
+      border-radius: 10px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+      max-width: 900px;
+      width: 100%;
+    }
+
+    h1 {
+      margin-top: 0;
+      margin-bottom: 6px;
+      font-size: 24px;
+      text-align: center;
+    }
+
+    .sub {
+      text-align: center;
+      margin-bottom: 16px;
+      color: #555;
+      font-size: 14px;
+    }
+
+    .stats-bar {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      font-size: 14px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: #f0f0f0;
+      flex-shrink: 0;
+    }
+
+    .quote-box {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 90px;
+      margin-bottom: 6px;
+      line-height: 1.6;
+      font-size: 18px;
+      background: #fafafa;
+      white-space: pre-wrap;
+    }
+
+    .quote-source {
+      font-size: 13px;
+      color: #777;
+      margin-bottom: 12px;
+      text-align: right;
+    }
+
+    .quote-char.correct {
+      color: #16a34a;
+    }
+
+    .quote-char.incorrect {
+      color: #dc2626;
+      text-decoration: underline;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    #input {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      outline: none;
+    }
+
+    #input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+    }
+
+    button {
+      padding: 8px 14px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      background: #3b82f6;
+      color: #fff;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      background: #2563eb;
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: default;
+    }
+
+    .results {
+      margin-top: 4px;
+      font-size: 14px;
+      color: #444;
+      min-height: 1.4em;
+    }
+
+    .muted {
+      color: #777;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Typing Quotes Game</h1>
+    <div class="sub">
+      Each quote is a random excerpt from a Wikipedia article summary.  
+      Type it exactly as shown, then press Enter to score and get a new quote.
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat">Quotes completed: <span id="quotesDone">0</span></div>
+      <div class="stat">Last WPM: <span id="wpm">0</span></div>
+      <div class="stat">Last accuracy: <span id="accuracy">0</span>%</div>
+    </div>
+
+    <div class="quote-box" id="quoteBox"></div>
+    <div class="quote-source" id="quoteSource"></div>
+
+    <div class="input-row">
+      <input
+        id="input"
+        type="text"
+        autocomplete="off"
+        placeholder="Press New Quote or hit Enter to begin..."
+        disabled
+      />
+      <button id="newQuoteBtn">New Quote</button>
+    </div>
+
+    <div class="results" id="results"></div>
+    <div class="muted">
+      Enter = score current quote and load the next (or just load a new quote if none is active).  
+      WPM is based on the time spent on the current quote only.
+    </div>
+  </div>
+
+  <script>
+    const quoteBox = document.getElementById("quoteBox");
+    const quoteSource = document.getElementById("quoteSource");
+    const input = document.getElementById("input");
+    const newQuoteBtn = document.getElementById("newQuoteBtn");
+
+    const quotesDoneSpan = document.getElementById("quotesDone");
+    const wpmSpan = document.getElementById("wpm");
+    const accSpan = document.getElementById("accuracy");
+    const resultsDiv = document.getElementById("results");
+
+    let currentQuote = null;
+    let quotesDone = 0;
+    let quoteStartTime = null;   // timestamp when typing this quote started
+    let loading = false;         // prevent spamming new quote
+
+    // Fetch a random article summary from Wikipedia and slice out a longer chunk
+    async function fetchRandomQuoteFromWikipedia() {
+      const url = "https://en.wikipedia.org/api/rest_v1/page/random/summary";
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error("HTTP error " + response.status);
+      }
+
+      const data = await response.json();
+      const title = data.title || "Wikipedia";
+      let extract = data.extract || "";
+
+      // Clean up whitespace
+      extract = extract.replace(/\s+/g, " ").trim();
+
+      // Make it a longer quote, but not absurdly long
+      // Try to keep between ~250 and ~500 characters by cutting at a sentence boundary.
+      if (extract.length > 500) {
+        // Find end of sentence near 350–500 chars
+        let cutPos = extract.lastIndexOf(".", 500);
+        if (cutPos < 250) {
+          cutPos = 500;
+        }
+        extract = extract.slice(0, cutPos + 1);
+      } else if (extract.length < 200 && data.description) {
+        // If it is very short, append description if available
+        extract = extract + " " + data.description;
+      }
+
+      return {
+        text: extract,
+        source: title
+      };
+    }
+
+    function renderQuoteHighlight(typed) {
+      if (!currentQuote) return;
+
+      const target = currentQuote.text;
+      const maxLen = Math.max(target.length, typed.length);
+      let html = "";
+
+      for (let i = 0; i < maxLen; i++) {
+        const targetChar = target[i] ?? "";
+        const typedChar = typed[i] ?? null;
+
+        if (typedChar === null) {
+          if (targetChar === "") continue;
+          html += `<span class="quote-char">${targetChar}</span>`;
+        } else if (typedChar === targetChar) {
+          html += `<span class="quote-char correct">${targetChar}</span>`;
+        } else {
+          html += `<span class="quote-char incorrect">${targetChar}</span>`;
+        }
+      }
+
+      quoteBox.innerHTML = html;
+    }
+
+    async function showNewQuote() {
+      if (loading) return;
+      loading = true;
+      input.disabled = true;
+      input.placeholder = "Loading quote from Wikipedia...";
+
+      currentQuote = null;
+      quoteBox.textContent = "Loading random Wikipedia summary...";
+      quoteSource.textContent = "";
+      resultsDiv.textContent = "";
+
+      try {
+        const q = await fetchRandomQuoteFromWikipedia();
+        currentQuote = q;
+        quoteBox.textContent = q.text;
+        quoteSource.textContent = "— " + q.source + " (Wikipedia)";
+        input.value = "";
+        input.disabled = false;
+        input.placeholder = "Type the quote here, then press Enter...";
+        input.focus();
+        quoteStartTime = performance.now();
+        // initial highlight (no typed characters yet)
+        renderQuoteHighlight("");
+      } catch (err) {
+        quoteBox.textContent = "Failed to load quote from Wikipedia.";
+        quoteSource.textContent = "";
+        input.disabled = true;
+        input.placeholder = "Press New Quote or Enter to try again.";
+      } finally {
+        loading = false;
+      }
+    }
+
+    function scoreCurrentQuote() {
+      if (!currentQuote || quoteStartTime === null) {
+        return null;
+      }
+
+      const typed = input.value;
+      const target = currentQuote.text;
+
+      const elapsedMs = performance.now() - quoteStartTime;
+      const elapsedMin = elapsedMs / 1000 / 60;
+
+      let correctChars = 0;
+      const maxLen = Math.max(typed.length, target.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (typed[i] === target[i]) {
+          correctChars++;
+        }
+      }
+
+      const totalTyped = typed.length;
+      const accuracy =
+        totalTyped > 0 ? Math.round((correctChars / totalTyped) * 100) : 0;
+      const wpm =
+        elapsedMin > 0 ? Math.round((correctChars / 5) / elapsedMin) : 0;
+
+      const isExactMatch = typed === target;
+
+      quotesDone++;
+      quotesDoneSpan.textContent = String(quotesDone);
+      wpmSpan.textContent = String(wpm);
+      accSpan.textContent = String(accuracy);
+
+      resultsDiv.innerHTML =
+        (isExactMatch ? "Perfect match. " : "Quote scored. ") +
+        `WPM: <strong>${wpm}</strong>, Accuracy: <strong>${accuracy}%</strong>.`;
+
+      quoteStartTime = null;
+      return { wpm, accuracy };
+    }
+
+    // Event: New Quote button
+    newQuoteBtn.addEventListener("click", async () => {
+      // If there is an active quote, you could optionally auto-score here.
+      // For now, just start a fresh one.
+      await showNewQuote();
+    });
+
+    // Live highlighting while typing
+    input.addEventListener("input", () => {
+      renderQuoteHighlight(input.value);
+    });
+
+    // Enter: score current quote (if any) and immediately load a new one
+    document.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+
+        if (currentQuote && !loading && !input.disabled) {
+          scoreCurrentQuote();
+        }
+        await showNewQuote();
+      }
+    });
+
+    // Initial UI state
+    (function init() {
+      currentQuote = null;
+      quotesDone = 0;
+      quoteStartTime = null;
+
+      quoteBox.textContent = "";
+      quoteSource.textContent = "";
+      input.value = "";
+      input.disabled = true;
+      input.placeholder = "Press New Quote or hit Enter to begin...";
+      resultsDiv.textContent = "";
+      quotesDoneSpan.textContent = "0";
+      wpmSpan.textContent = "0";
+      accSpan.textContent = "0";
+    })();
+  </script>
+</body>
+</html>
