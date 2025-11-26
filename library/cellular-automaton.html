@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cellular Automaton Sandbox</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #111;
+      color: #eee;
+    }
+
+    body {
+      display: flex;
+      flex-direction: row;
+    }
+
+    #sidebar {
+      width: 280px;
+      background: #181818;
+      border-right: 1px solid #333;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+    }
+
+    #sidebar h2 {
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+
+    #sidebar h3 {
+      font-size: 13px;
+      margin-top: 8px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #aaa;
+    }
+
+    #controls, #rules, #kernel, #info {
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 8px;
+      background: #141414;
+    }
+
+    button {
+      background: #2b6cb0;
+      color: #f7fafc;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 8px;
+      margin: 2px 2px 2px 0;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    button.secondary {
+      background: #333;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    label {
+      display: block;
+      margin-top: 6px;
+      margin-bottom: 2px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 4px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #080808;
+      color: #eee;
+      font-size: 12px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    .kernel-grid {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 2px;
+      margin-top: 4px;
+      background: #000;
+      padding: 2px;
+      border-radius: 4px;
+      border: 1px solid #333;
+    }
+
+    .kernel-cell {
+      width: 22px;
+      height: 22px;
+      border-radius: 1px;
+      border: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      cursor: pointer;
+      user-select: none;
+      background: #101010;
+      color: #aaa;
+    }
+
+    .kernel-cell.active {
+      border-color: #63b3ed;
+    }
+
+    .kernel-cell.center {
+      border-style: dashed;
+      border-color: #999;
+      color: #ddd;
+      font-weight: 600;
+    }
+
+    #info p {
+      margin-bottom: 4px;
+      line-height: 1.3;
+    }
+
+    #canvas-wrapper {
+      flex: 1;
+      position: relative;
+      background: #050505;
+    }
+
+    #gridCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #050505;
+      cursor: crosshair;
+    }
+
+    #status-bar {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(0,0,0,0.6);
+      color: #eee;
+      font-size: 11px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <div id="header">
+      <h2>Cellular Automaton</h2>
+      <div style="font-size: 11px; color:#aaa;">Draw your own rule kernel and run the simulation.</div>
+    </div>
+
+    <div id="controls">
+      <h3>Simulation</h3>
+      <div>
+        <button id="playPauseBtn">Start</button>
+        <button id="stepBtn" class="secondary">Step</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+        <button id="randomBtn" class="secondary">Random</button>
+      </div>
+      <label for="speedRange">Step interval: <span id="speedLabel">200 ms</span></label>
+      <input id="speedRange" type="range" min="20" max="1000" value="200" />
+    </div>
+
+    <div id="rules">
+      <h3>Rules (B/S)</h3>
+      <p style="font-size:11px; color:#aaa;">Binary mode: classic birth / survival counts using active kernel neighbors (Conway's Life is B3 / S23). Gradient mode: rules apply to weighted neighbor sums.</p>
+      <label for="birthInput">Birth (B):</label>
+      <input id="birthInput" type="text" value="3" placeholder="e.g. 3 or 3,6" />
+      <label for="surviveInput">Survive (S):</label>
+      <input id="surviveInput" type="text" value="2,3" placeholder="e.g. 2,3" />
+
+      <h4 style="font-size:12px; margin-top:8px; color:#ccc;">Gradient rules</h4>
+      <p style="font-size:11px; color:#aaa;">Used when kernel mode is set to Gradient. Thresholds are on the weighted sum of alive neighbors.</p>
+      <label for="gradBirthMinInput">Birth sum min:</label>
+      <input id="gradBirthMinInput" type="text" value="2.5" />
+      <label for="gradBirthMaxInput">Birth sum max:</label>
+      <input id="gradBirthMaxInput" type="text" value="3.5" />
+      <label for="gradSurviveMinInput">Survive sum min:</label>
+      <input id="gradSurviveMinInput" type="text" value="1.5" />
+      <label for="gradSurviveMaxInput">Survive sum max:</label>
+      <input id="gradSurviveMaxInput" type="text" value="3.5" />
+    </div>
+
+    <div id="kernel">
+      <h3>Kernel</h3>
+      <p style="font-size:11px; color:#aaa;">Click cells to shape the neighborhood. In gradient mode, each cell can have a weight between 0 and 1.</p>
+      <div class="kernel-grid" id="kernelGrid"></div>
+      <button id="kernelModeBtn" class="secondary" style="margin-top:6px;">Mode: Binary</button>
+      <button id="kernelMoore" class="secondary">Preset: Moore (r=1)</button>
+      <button id="kernelVonNeumann" class="secondary">Preset: Von Neumann (r=2)</button>
+    </div>
+      <button id="kernelMoore" class="secondary" style="margin-top:6px;">Moore 8-neighborhood</button>
+      <button id="kernelVonNeumann" class="secondary">Von Neumann (4)</button>
+    </div>
+
+    <div id="info">
+      <h3>Controls</h3>
+      <p>Left click: toggle cell alive/dead.</p>
+      <p>Middle mouse drag: pan.</p>
+      <p>Mouse wheel: zoom in/out.</p>
+      <p>Simulation runs on a sparse infinite grid.</p>
+    </div>
+  </div>
+
+  <div id="canvas-wrapper">
+    <canvas id="gridCanvas"></canvas>
+    <div id="status-bar"></div>
+  </div>
+
+  <script>
+    // --- Config ---
+    const KERNEL_SIZE = 9; // size of the kernel grid (KERNEL_SIZE x KERNEL_SIZE)
+    const KERNEL_CENTER = Math.floor(KERNEL_SIZE / 2);
+
+    // --- Canvas + basic setup ---
+    const canvas = document.getElementById('gridCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusBar = document.getElementById('status-bar');
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Camera
+    let scale = 20; // pixels per cell
+    let offsetX = canvas.clientWidth / 2;
+    let offsetY = canvas.clientHeight / 2;
+
+    // Simulation
+    let alive = new Set(); // keys "x,y"
+
+    function makeEmptyMask() {
+      const mask = [];
+      for (let j = 0; j < KERNEL_SIZE; j++) {
+        const row = [];
+        for (let i = 0; i < KERNEL_SIZE; i++) row.push(0);
+        mask.push(row);
+      }
+      return mask;
+    }
+
+    function makeMooreRadius1Mask() {
+      // Classic Moore neighborhood radius 1 (8 neighbors) embedded in KERNEL_SIZE grid
+      const mask = makeEmptyMask();
+      for (let j = 0; j < KERNEL_SIZE; j++) {
+        for (let i = 0; i < KERNEL_SIZE; i++) {
+          const dx = i - KERNEL_CENTER;
+          const dy = j - KERNEL_CENTER;
+          if (dx === 0 && dy === 0) continue;
+          if (Math.max(Math.abs(dx), Math.abs(dy)) === 1) mask[j][i] = 1.0;
+        }
+      }
+      return mask;
+    }
+
+    function makeVonNeumannRadius2Mask() {
+      // Diamond radius 2 in KERNEL_SIZE grid
+      const mask = makeEmptyMask();
+      const radius = 2;
+      for (let j = 0; j < KERNEL_SIZE; j++) {
+        for (let i = 0; i < KERNEL_SIZE; i++) {
+          const dx = Math.abs(i - KERNEL_CENTER);
+          const dy = Math.abs(j - KERNEL_CENTER);
+          if (dx === 0 && dy === 0) continue;
+          if (dx + dy <= radius) mask[j][i] = 1.0;
+        }
+      }
+      return mask;
+    }
+
+    let kernelMask = makeMooreRadius1Mask();
+
+    let birthSet = new Set([3]);
+    let surviveSet = new Set([2, 3]);
+
+    // Gradient rule parameters (for weighted sums)
+    let gradBirthMin = 2.5;
+    let gradBirthMax = 3.5;
+    let gradSurviveMin = 1.5;
+    let gradSurviveMax = 3.5;
+
+    let gradientMode = false; // false = binary counts, true = weighted/gradient
+
+    let isRunning = false;
+    let stepInterval = 200; // ms
+    let lastStepTime = 0;
+
+    // Utility functions
+    function key(x, y) { return x + ',' + y; }
+    function parseKey(k) {
+      const [sx, sy] = k.split(',');
+      return [parseInt(sx, 10), parseInt(sy, 10)];
+    }
+
+    function parseRuleList(str) {
+      const s = new Set();
+      str.split(',').map(x => x.trim()).filter(x => x.length).forEach(x => {
+        const n = parseInt(x, 10);
+        if (!isNaN(n)) s.add(n);
+      });
+      return s;
+    }
+
+    function updateRuleSetsFromInputs() {
+      const birthInput = document.getElementById('birthInput').value;
+      const surviveInput = document.getElementById('surviveInput').value;
+      birthSet = parseRuleList(birthInput);
+      surviveSet = parseRuleList(surviveInput);
+
+      const gbMinStr = document.getElementById('gradBirthMinInput').value;
+      const gbMaxStr = document.getElementById('gradBirthMaxInput').value;
+      const gsMinStr = document.getElementById('gradSurviveMinInput').value;
+      const gsMaxStr = document.getElementById('gradSurviveMaxInput').value;
+
+      const gbMin = parseFloat(gbMinStr);
+      const gbMax = parseFloat(gbMaxStr);
+      const gsMin = parseFloat(gsMinStr);
+      const gsMax = parseFloat(gsMaxStr);
+
+      if (!isNaN(gbMin)) gradBirthMin = gbMin;
+      if (!isNaN(gbMax)) gradBirthMax = gbMax;
+      if (!isNaN(gsMin)) gradSurviveMin = gsMin;
+      if (!isNaN(gsMax)) gradSurviveMax = gsMax;
+    }
+
+    // --- Kernel UI ---
+    const kernelGridEl = document.getElementById('kernelGrid');
+    const kernelModeBtn = document.getElementById('kernelModeBtn');
+
+    function renderKernelGrid() {
+      kernelGridEl.innerHTML = '';
+      kernelGridEl.style.gridTemplateColumns = `repeat(${KERNEL_SIZE}, 1fr)`;
+      for (let j = 0; j < KERNEL_SIZE; j++) {
+        for (let i = 0; i < KERNEL_SIZE; i++) {
+          const cell = document.createElement('div');
+          cell.className = 'kernel-cell';
+          if (i === KERNEL_CENTER && j === KERNEL_CENTER) {
+            cell.classList.add('center');
+          }
+          const w = kernelMask[j][i]; // 0..1
+          if (w > 0) cell.classList.add('active');
+
+          // Visuals depend on mode
+          if (i === KERNEL_CENTER && j === KERNEL_CENTER) {
+            cell.textContent = 'C';
+            cell.style.background = '#202020';
+          } else {
+            if (gradientMode) {
+              // Shade based on weight
+              const alpha = Math.max(0.05, Math.min(1, w));
+              cell.style.background = `rgba(43,108,176,${alpha})`;
+              cell.textContent = w > 0 ? w.toFixed(2) : '';
+            } else {
+              cell.style.background = w > 0 ? '#2b6cb0' : '#101010';
+              cell.textContent = '';
+            }
+          }
+
+          cell.dataset.x = i;
+          cell.dataset.y = j;
+          cell.addEventListener('click', (e) => {
+            const x = parseInt(cell.dataset.x, 10);
+            const y = parseInt(cell.dataset.y, 10);
+            if (x === KERNEL_CENTER && y === KERNEL_CENTER) {
+              // keep center as zero-weight by default; ignore clicks
+              return;
+            }
+            const current = kernelMask[y][x];
+            if (!gradientMode) {
+              // binary toggle between 0 and 1
+              kernelMask[y][x] = current > 0 ? 0 : 1;
+            } else {
+              // gradient: cycle through discrete steps 0, 0.25, 0.5, 0.75, 1
+              const steps = [0, 0.25, 0.5, 0.75, 1.0];
+              let idx = steps.findIndex(s => Math.abs(s - current) < 1e-3);
+              if (idx === -1) idx = 0;
+              idx = (idx + 1) % steps.length;
+              kernelMask[y][x] = steps[idx];
+            }
+            renderKernelGrid();
+          });
+          kernelGridEl.appendChild(cell);
+        }
+      }
+    }
+
+    renderKernelGrid();
+
+    kernelModeBtn.addEventListener('click', () => {
+      gradientMode = !gradientMode;
+      kernelModeBtn.textContent = gradientMode ? 'Mode: Gradient' : 'Mode: Binary';
+      renderKernelGrid();
+    });
+
+    document.getElementById('kernelMoore').addEventListener('click', () => {
+      kernelMask = makeMooreRadius1Mask();
+      renderKernelGrid();
+    });
+
+    document.getElementById('kernelVonNeumann').addEventListener('click', () => {
+      kernelMask = makeVonNeumannRadius2Mask();
+      renderKernelGrid();
+    });
+
+    document.getElementById('birthInput').addEventListener('change', updateRuleSetsFromInputs);
+    document.getElementById('surviveInput').addEventListener('change', updateRuleSetsFromInputs);
+    document.getElementById('gradBirthMinInput').addEventListener('change', updateRuleSetsFromInputs);
+    document.getElementById('gradBirthMaxInput').addEventListener('change', updateRuleSetsFromInputs);
+    document.getElementById('gradSurviveMinInput').addEventListener('change', updateRuleSetsFromInputs);
+    document.getElementById('gradSurviveMaxInput').addEventListener('change', updateRuleSetsFromInputs);
+
+    // --- Controls ---
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const stepBtn = document.getElementById('stepBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const randomBtn = document.getElementById('randomBtn');
+    const speedRange = document.getElementById('speedRange');
+    const speedLabel = document.getElementById('speedLabel');
+
+    playPauseBtn.addEventListener('click', () => {
+      isRunning = !isRunning;
+      playPauseBtn.textContent = isRunning ? 'Pause' : 'Start';
+    });
+
+    stepBtn.addEventListener('click', () => {
+      if (!isRunning) {
+        stepSimulation();
+      }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      alive.clear();
+    });
+
+    randomBtn.addEventListener('click', () => {
+      alive.clear();
+      const cols = Math.floor(canvas.clientWidth / scale);
+      const rows = Math.floor(canvas.clientHeight / scale);
+      const startX = -Math.floor(cols / 2);
+      const startY = -Math.floor(rows / 2);
+      for (let y = startY; y < startY + rows; y++) {
+        for (let x = startX; x < startX + cols; x++) {
+          if (Math.random() < 0.12) {
+            alive.add(key(x, y));
+          }
+        }
+      }
+    });
+
+    speedRange.addEventListener('input', () => {
+      stepInterval = parseInt(speedRange.value, 10);
+      speedLabel.textContent = stepInterval + ' ms';
+    });
+
+    // --- Coordinate transforms ---
+    function screenToWorld(x, y) {
+      const rect = canvas.getBoundingClientRect();
+      const sx = x - rect.left;
+      const sy = y - rect.top;
+      const wx = (sx - offsetX) / scale;
+      const wy = (sy - offsetY) / scale;
+      return [wx, wy];
+    }
+
+    function screenToCell(x, y) {
+      const [wx, wy] = screenToWorld(x, y);
+      return [Math.floor(wx), Math.floor(wy)];
+    }
+
+    // --- Mouse interaction ---
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let panStartOffsetX = 0;
+    let panStartOffsetY = 0;
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 1) {
+        // middle button: pan
+        isPanning = true;
+        panStartX = e.clientX;
+        panStartY = e.clientY;
+        panStartOffsetX = offsetX;
+        panStartOffsetY = offsetY;
+        canvas.style.cursor = 'grab';
+      } else if (e.button === 0) {
+        // left click: toggle cell
+        const [cx, cy] = screenToCell(e.clientX, e.clientY);
+        const k = key(cx, cy);
+        if (alive.has(k)) alive.delete(k); else alive.add(k);
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 1 && isPanning) {
+        isPanning = false;
+        canvas.style.cursor = 'crosshair';
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (isPanning) {
+        const dx = e.clientX - panStartX;
+        const dy = e.clientY - panStartY;
+        offsetX = panStartOffsetX + dx;
+        offsetY = panStartOffsetY + dy;
+      }
+      // status bar: show world and cell coords
+      const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+      const [cx, cy] = [Math.floor(wx), Math.floor(wy)];
+      statusBar.textContent = `Cell: (${cx}, ${cy})  |  Zoom: ${scale.toFixed(1)} px/cell  |  Kernel mode: ${gradientMode ? 'Gradient' : 'Binary'}`;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      if (!isPanning) return;
+      isPanning = false;
+      canvas.style.cursor = 'crosshair';
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY;
+      const zoomFactor = delta > 0 ? 0.9 : 1.1;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const worldXBefore = (mouseX - offsetX) / scale;
+      const worldYBefore = (mouseY - offsetY) / scale;
+
+      scale *= zoomFactor;
+      scale = Math.max(4, Math.min(scale, 80));
+
+      const worldXAfter = worldXBefore;
+      const worldYAfter = worldYBefore;
+      offsetX = mouseX - worldXAfter * scale;
+      offsetY = mouseY - worldYAfter * scale;
+    }, { passive: false });
+
+    // --- Simulation step ---
+    function stepSimulation() {
+      updateRuleSetsFromInputs();
+      const neighborCounts = new Map();
+
+      function addNeighbor(nx, ny, weight) {
+        if (weight <= 0) return;
+        const k = key(nx, ny);
+        const prev = neighborCounts.get(k) || 0;
+        neighborCounts.set(k, prev + weight);
+      }
+
+      // accumulate neighbors based on kernel mask
+      for (const k of alive) {
+        const [x, y] = parseKey(k);
+        for (let j = 0; j < KERNEL_SIZE; j++) {
+          for (let i = 0; i < KERNEL_SIZE; i++) {
+            const w = kernelMask[j][i];
+            if (w <= 0) continue;
+            const dx = i - KERNEL_CENTER;
+            const dy = j - KERNEL_CENTER;
+            const nx = x + dx;
+            const ny = y + dy;
+            addNeighbor(nx, ny, w);
+          }
+        }
+      }
+
+      const newAlive = new Set();
+
+      // Check all cells that have neighbor counts, plus existing alive cells
+      const toCheck = new Set();
+      for (const k of neighborCounts.keys()) toCheck.add(k);
+      for (const k of alive.keys()) toCheck.add(k);
+
+      for (const k of toCheck) {
+        const [x, y] = parseKey(k);
+        const n = neighborCounts.get(k) ?? 0;
+        const currentlyAlive = alive.has(k);
+        if (gradientMode) {
+          // Weighted-sum rules
+          if (currentlyAlive) {
+            if (n >= gradSurviveMin && n <= gradSurviveMax) newAlive.add(k);
+          } else {
+            if (n >= gradBirthMin && n <= gradBirthMax) newAlive.add(k);
+          }
+        } else {
+          // Classic integer neighbor-count rules
+          const count = Math.round(n);
+          if (currentlyAlive) {
+            if (surviveSet.has(count)) newAlive.add(k);
+          } else {
+            if (birthSet.has(count)) newAlive.add(k);
+          }
+        }
+      }
+
+      alive = newAlive;
+    }
+
+    // --- Rendering ---
+    function render() {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Background
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, 0, w, h);
+
+      // Draw grid lines (only when zoomed in enough)
+      if (scale >= 8) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1;
+
+        const startX = -offsetX / scale;
+        const startY = -offsetY / scale;
+        const endX = (w - offsetX) / scale;
+        const endY = (h - offsetY) / scale;
+
+        const minX = Math.floor(startX);
+        const maxX = Math.ceil(endX);
+        const minY = Math.floor(startY);
+        const maxY = Math.ceil(endY);
+
+        ctx.beginPath();
+        for (let x = minX; x <= maxX; x++) {
+          const sx = offsetX + x * scale;
+          ctx.moveTo(sx + 0.5, 0);
+          ctx.lineTo(sx + 0.5, h);
+        }
+        for (let y = minY; y <= maxY; y++) {
+          const sy = offsetY + y * scale;
+          ctx.moveTo(0, sy + 0.5);
+          ctx.lineTo(w, sy + 0.5);
+        }
+        ctx.stroke();
+      }
+
+      // Draw alive cells
+      ctx.fillStyle = '#48bb78';
+      for (const k of alive) {
+        const [x, y] = parseKey(k);
+        const sx = offsetX + x * scale;
+        const sy = offsetY + y * scale;
+        if (sx + scale < 0 || sy + scale < 0 || sx > w || sy > h) continue;
+        ctx.fillRect(sx + 1, sy + 1, scale - 2, scale - 2);
+      }
+    }
+
+    // --- Main loop ---
+    function loop(timestamp) {
+      if (isRunning) {
+        if (!lastStepTime) lastStepTime = timestamp;
+        const dt = timestamp - lastStepTime;
+        if (dt >= stepInterval) {
+          stepSimulation();
+          lastStepTime = timestamp;
+        }
+      } else {
+        lastStepTime = timestamp;
+      }
+
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
