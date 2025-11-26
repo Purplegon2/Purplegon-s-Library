@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Totally Accurate Chemistry Simulator (TACS)</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: #ffffff;
+      color: #000000;
+    }
+
+    #sidebar {
+      width: 220px;
+      background: #ffffff;
+      border-right: 1px solid #000000;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    #sidebar h1 {
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+
+    #sidebar small {
+      display: block;
+      font-size: 11px;
+      color: #000000;
+      margin-bottom: 8px;
+    }
+
+    .section {
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #000000;
+    }
+
+    .element-buttons {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .element-button {
+      border: 1px solid #000000;
+      border-radius: 2px;
+      padding: 6px 4px;
+      font-size: 12px;
+      background: #ffffff;
+      color: #000000;
+      cursor: pointer;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.05s, transform 0.05s;
+    }
+
+    .element-button .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid #000000;
+      flex-shrink: 0;
+    }
+
+    .element-button span.meta {
+      font-size: 11px;
+    }
+
+    .element-button.active {
+      background: #000000;
+      color: #ffffff;
+    }
+
+    .element-button:active {
+      transform: scale(0.97);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .control-button {
+      border-radius: 2px;
+      border: 1px solid #000000;
+      padding: 4px 8px;
+      font-size: 11px;
+      background: #ffffff;
+      color: #000000;
+      cursor: pointer;
+    }
+
+    .control-button:hover {
+      background: #f0f0f0;
+    }
+
+    .label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #000000;
+    }
+
+    #info {
+      font-size: 11px;
+      color: #000000;
+      line-height: 1.4;
+    }
+
+    #main {
+      flex: 1;
+      position: relative;
+      background: #ffffff;
+    }
+
+    #simCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #ffffff;
+      cursor: crosshair;
+    }
+
+    #statusBar {
+      position: absolute;
+      left: 8px;
+      bottom: 8px;
+      padding: 4px 8px;
+      border-radius: 2px;
+      font-size: 11px;
+      color: #000000;
+      background: #ffffff;
+      border: 1px solid #000000;
+    }
+  </style>
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="section">
+      <h1>TACS</h1>
+      <small>Totally Accurate Chemistry Simulator<br />
+        Now: color particles with simple interactions.</small>
+    </div>
+
+    <div class="section">
+      <div class="label-row">
+        <strong style="font-size: 12px;">Particle Types</strong>
+        <span style="font-size: 10px;">Click canvas to place</span>
+      </div>
+      <div class="element-buttons" id="elementButtons"></div>
+    </div>
+
+    <div class="section">
+      <div class="label-row" style="margin-bottom: 4px;">
+        <strong style="font-size: 12px;">Simulation</strong>
+      </div>
+      <div class="controls">
+        <button class="control-button" id="toggleSimBtn">Pause</button>
+        <button class="control-button" id="clearBtn">Clear</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="label-row" style="margin-bottom: 4px;">
+        <strong style="font-size: 12px;">Notes</strong>
+      </div>
+      <div id="info">
+        • Choose a color and click in the field to add a particle.<br />
+        • Drag particles with the mouse to reposition them.<br />
+        • Colors have different (arbitrary) masses/"valence" for bonding.<br />
+        • Distances between bonded particles are rigid.
+      </div>
+    </div>
+
+  </aside>
+
+  <main id="main">
+    <canvas id="simCanvas"></canvas>
+    <div id="statusBar">Particles: <span id="atomCount">0</span> · Bonds: <span id="bondCount">0</span></div>
+  </main>
+
+  <script>
+    // --- Particle type definitions (all same size; arbitrary properties) ---
+    const PARTICLE_TYPES = {
+      red:   { name: "Red",   color: "#ff4b4b", mass: 1.2, valence: 2 },
+      blue:  { name: "Blue",  color: "#4b6dff", mass: 2.0, valence: 3 },
+      green: { name: "Green", color: "#3aa655", mass: 0.8, valence: 1 },
+      yellow:{ name: "Yellow",color: "#ffcc33", mass: 1.5, valence: 4 },
+      violet:{ name: "Violet",color: "#b041ff", mass: 1.0, valence: 2 },
+      cyan:  { name: "Cyan",  color: "#34c6ff", mass: 1.8, valence: 3 }
+    };
+
+    const PARTICLE_RADIUS = 14; // all particles same size
+
+    // --- Simulation parameters (tuned for stability, not realism) ---
+    const TIME_STEP = 0.016; // ~60 Hz
+    const NONBONDED_REPULSION = 2000; // short-range push
+    const NONBONDED_ATTRACTION = 200; // mid-range pull
+    const NONBONDED_RANGE = 160; // beyond this, no interaction
+    const IDEAL_SEPARATION = 60; // preferred non-bonded distance
+    const GLOBAL_DAMPING = 0.98; // friction
+    const BOND_FORM_DISTANCE = 55; // when particles get this close, try to bond
+    const BOND_REST_LENGTH = 48;  // rigid distance between bonded particles
+
+    const canvas = document.getElementById("simCanvas");
+    const ctx = canvas.getContext("2d");
+    const atomCountEl = document.getElementById("atomCount");
+    const bondCountEl = document.getElementById("bondCount");
+    const toggleSimBtn = document.getElementById("toggleSimBtn");
+    const clearBtn = document.getElementById("clearBtn");
+
+    let width = canvas.clientWidth;
+    let height = canvas.clientHeight;
+
+    function resizeCanvas() {
+      width = canvas.clientWidth = canvas.parentElement.clientWidth;
+      height = canvas.clientHeight = canvas.parentElement.clientHeight;
+      canvas.width = width * window.devicePixelRatio;
+      canvas.height = height * window.devicePixelRatio;
+      ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // --- State ---
+    const atoms = [];
+    const bonds = []; // { a: index, b: index, restLength }
+
+    let running = true;
+    let selectedTypeKey = "red";
+
+    // --- UI: particle buttons ---
+    const elementButtonsContainer = document.getElementById("elementButtons");
+
+    function buildParticleButtons() {
+      elementButtonsContainer.innerHTML = "";
+      Object.entries(PARTICLE_TYPES).forEach(([key, type]) => {
+        const btn = document.createElement("button");
+        btn.className = "element-button" + (key === selectedTypeKey ? " active" : "");
+
+        const swatch = document.createElement("div");
+        swatch.className = "swatch";
+        swatch.style.backgroundColor = type.color;
+
+        const text = document.createElement("span");
+        text.className = "meta";
+        text.textContent = type.name;
+
+        btn.appendChild(swatch);
+        btn.appendChild(text);
+
+        btn.addEventListener("click", () => {
+          selectedTypeKey = key;
+          document.querySelectorAll(".element-button").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+        });
+
+        elementButtonsContainer.appendChild(btn);
+      });
+    }
+
+    buildParticleButtons();
+
+    // --- Atom helpers ---
+    function addAtom(x, y, typeKey) {
+      const def = PARTICLE_TYPES[typeKey];
+      atoms.push({
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        fx: 0,
+        fy: 0,
+        type: typeKey,
+        id: crypto.randomUUID()
+      });
+      updateStatus();
+    }
+
+    function clearSimulation() {
+      atoms.length = 0;
+      bonds.length = 0;
+      updateStatus();
+    }
+
+    function updateStatus() {
+      atomCountEl.textContent = atoms.length.toString();
+      bondCountEl.textContent = bonds.length.toString();
+    }
+
+    // --- Bond helpers ---
+    function currentBondCountForAtom(index) {
+      let c = 0;
+      for (const b of bonds) {
+        if (b.a === index || b.b === index) c++;
+      }
+      return c;
+    }
+
+    function canFormMoreBonds(index) {
+      const atom = atoms[index];
+      const def = PARTICLE_TYPES[atom.type];
+      return currentBondCountForAtom(index) < def.valence;
+    }
+
+    function isBonded(i, j) {
+      return bonds.some(b => (b.a === i && b.b === j) || (b.a === j && b.b === i));
+    }
+
+    function tryFormBond(i, j, dist) {
+      if (i === j) return;
+      if (isBonded(i, j)) return;
+      if (!canFormMoreBonds(i) || !canFormMoreBonds(j)) return;
+      if (dist > BOND_FORM_DISTANCE) return;
+
+      const restLength = BOND_REST_LENGTH;
+      bonds.push({ a: i, b: j, restLength });
+      updateStatus();
+    }
+
+    // --- Mouse interaction (placement + dragging) ---
+    let draggingAtomIndex = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+    let dragMoved = false;
+
+    function getMousePos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: evt.clientX - rect.left,
+        y: evt.clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener("mousedown", (evt) => {
+      const { x, y } = getMousePos(evt);
+
+      // Try to pick a particle to drag
+      let pickedIndex = null;
+      let minDist2 = Infinity;
+      atoms.forEach((atom, i) => {
+        const r = PARTICLE_RADIUS;
+        const dx = atom.x - x;
+        const dy = atom.y - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < r * r && d2 < minDist2) {
+          minDist2 = d2;
+          pickedIndex = i;
+        }
+      });
+
+      if (pickedIndex !== null) {
+        draggingAtomIndex = pickedIndex;
+        dragOffsetX = atoms[pickedIndex].x - x;
+        dragOffsetY = atoms[pickedIndex].y - y;
+        dragMoved = false;
+      } else {
+        draggingAtomIndex = null;
+      }
+    });
+
+    canvas.addEventListener("mousemove", (evt) => {
+      if (draggingAtomIndex === null) return;
+
+      const { x, y } = getMousePos(evt);
+      const atom = atoms[draggingAtomIndex];
+      const newX = x + dragOffsetX;
+      const newY = y + dragOffsetY;
+
+      if (Math.abs(atom.x - newX) > 1 || Math.abs(atom.y - newY) > 1) {
+        dragMoved = true;
+      }
+
+      atom.x = newX;
+      atom.y = newY;
+      atom.vx = 0;
+      atom.vy = 0;
+    });
+
+    function handleUpLikeEvent(evt) {
+      const wasDragging = draggingAtomIndex !== null;
+      const moved = dragMoved;
+      draggingAtomIndex = null;
+
+      const { x, y } = getMousePos(evt);
+
+      // If we pressed and released without moving much, treat it as a placement click
+      if (!wasDragging || !moved) {
+        addAtom(x, y, selectedTypeKey);
+      }
+    }
+
+    canvas.addEventListener("mouseup", handleUpLikeEvent);
+    canvas.addEventListener("mouseleave", () => {
+      draggingAtomIndex = null;
+    });
+
+    // --- Simulation core ---
+    function stepSimulation(dt) {
+      const n = atoms.length;
+      if (n === 0) return;
+
+      // Reset forces
+      for (let i = 0; i < n; i++) {
+        atoms[i].fx = 0;
+        atoms[i].fy = 0;
+      }
+
+      // Non-bonded interactions and bond formation
+      for (let i = 0; i < n; i++) {
+        const ai = atoms[i];
+        for (let j = i + 1; j < n; j++) {
+          const aj = atoms[j];
+
+          let dx = aj.x - ai.x;
+          let dy = aj.y - ai.y;
+          let dist = Math.hypot(dx, dy) || 0.0001;
+          if (dist > NONBONDED_RANGE) continue;
+
+          const nx = dx / dist;
+          const ny = dy / dist;
+
+          // Non-bonded force: simple piecewise (repel when too close, attract when a bit far)
+          let fMag = 0;
+          if (dist < IDEAL_SEPARATION) {
+            // Repulsion grows as we overlap
+            const overlap = IDEAL_SEPARATION - dist;
+            fMag = -NONBONDED_REPULSION * (overlap / IDEAL_SEPARATION);
+          } else {
+            // Weak attraction fades with distance
+            const stretch = dist - IDEAL_SEPARATION;
+            const factor = Math.max(0, 1 - stretch / (NONBONDED_RANGE - IDEAL_SEPARATION));
+            fMag = NONBONDED_ATTRACTION * factor;
+          }
+
+          const fx = fMag * nx;
+          const fy = fMag * ny;
+
+          ai.fx -= fx;
+          ai.fy -= fy;
+          aj.fx += fx;
+          aj.fy += fy;
+
+          // Try bond formation when close enough
+          if (dist < BOND_FORM_DISTANCE * 0.9) {
+            tryFormBond(i, j, dist);
+          }
+        }
+      }
+
+      // Bond constraints (rigid distance, no springiness)
+      for (const b of bonds) {
+        const a = atoms[b.a];
+        const c = atoms[b.b];
+        if (!a || !c) continue;
+
+        let dx = c.x - a.x;
+        let dy = c.y - a.y;
+        let dist = Math.hypot(dx, dy) || 0.0001;
+        const diff = (dist - b.restLength) / dist;
+
+        // How much to correct each end (split between the particles)
+        let offsetX = dx * diff * 0.5;
+        let offsetY = dy * diff * 0.5;
+
+        const aDragged = (draggingAtomIndex === b.a);
+        const cDragged = (draggingAtomIndex === b.b);
+
+        // If both are free, move both. If one is being dragged, move only the free one.
+        if (!aDragged && !cDragged) {
+          a.x += offsetX;
+          a.y += offsetY;
+          c.x -= offsetX;
+          c.y -= offsetY;
+        } else if (aDragged && !cDragged) {
+          c.x -= 2 * offsetX;
+          c.y -= 2 * offsetY;
+        } else if (!aDragged && cDragged) {
+          a.x += 2 * offsetX;
+          a.y += 2 * offsetY;
+        }
+      }
+
+      // Integrate motion
+      for (let i = 0; i < n; i++) {
+        const atom = atoms[i];
+        const def = PARTICLE_TYPES[atom.type];
+        const mass = def.mass || 1;
+
+        // skip integration if this particle is being dragged
+        if (i === draggingAtomIndex) continue;
+
+        const ax = atom.fx / mass;
+        const ay = atom.fy / mass;
+
+        atom.vx += ax * dt;
+        atom.vy += ay * dt;
+
+        atom.vx *= GLOBAL_DAMPING;
+        atom.vy *= GLOBAL_DAMPING;
+
+        atom.x += atom.vx * dt * 60; // scale to keep it lively
+        atom.y += atom.vy * dt * 60;
+
+        // Simple wall collision
+        const r = PARTICLE_RADIUS;
+        if (atom.x < r) {
+          atom.x = r;
+          atom.vx *= -0.4;
+        } else if (atom.x > width - r) {
+          atom.x = width - r;
+          atom.vx *= -0.4;
+        }
+        if (atom.y < r) {
+          atom.y = r;
+          atom.vy *= -0.4;
+        } else if (atom.y > height - r) {
+          atom.y = height - r;
+          atom.vy *= -0.4;
+        }
+      }
+    }
+
+    // --- Rendering ---
+    function draw() {
+      ctx.clearRect(0, 0, width, height);
+
+      // Bonds (simple rough black lines)
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#000000";
+      ctx.lineCap = "butt";
+      ctx.beginPath();
+      for (const b of bonds) {
+        const a = atoms[b.a];
+        const c = atoms[b.b];
+        if (!a || !c) continue;
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(c.x, c.y);
+      }
+      ctx.stroke();
+
+      // Particles – colored circles with soft edges preserved
+      for (const atom of atoms) {
+        const def = PARTICLE_TYPES[atom.type];
+
+        // Solid core
+        ctx.fillStyle = def.color;
+        ctx.beginPath();
+        ctx.arc(atom.x, atom.y, PARTICLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Simple black outline for rougher look
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#000000";
+        ctx.stroke();
+      }
+    }
+
+    // --- Animation loop ---
+    let lastTime = performance.now();
+
+    function loop(now) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+
+      if (running) {
+        // fixed-step integration for stability
+        let accumulator = dt;
+        while (accumulator > 0) {
+          const step = Math.min(TIME_STEP, accumulator);
+          stepSimulation(step);
+          accumulator -= step;
+        }
+      }
+
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+
+    // --- Buttons ---
+    toggleSimBtn.addEventListener("click", () => {
+      running = !running;
+      toggleSimBtn.textContent = running ? "Pause" : "Play";
+    });
+
+    clearBtn.addEventListener("click", () => {
+      clearSimulation();
+    });
+  </script>
+</body>
+</html>
