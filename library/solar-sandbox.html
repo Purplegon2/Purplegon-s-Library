@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Solar Sandbox</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #050810;
+      color: #eee;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      pointer-events: none;
+    }
+    #controls {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 8px;
+      font-size: 12px;
+      display: flex;
+      flex-direction: row;
+      gap: 12px;
+      align-items: center;
+    }
+    #controls label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    #controls input[type="range"] {
+      width: 120px;
+    }
+    #controls button {
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #777;
+      background: #111;
+      color: #eee;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    #controls button:hover {
+      background: #222;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sim"></canvas>
+
+  <div id="ui">
+    <div><strong>Solar Sandbox</strong></div>
+    <div>Click, hold, and drag to place a planet.</div>
+    <div>The arrow shows launch direction and speed.</div>
+    <div>Dashed line = predicted orbit preview.</div>
+  </div>
+
+    <div id="controls">
+    <label>
+      Planet radius
+      <input id="radiusSlider" type="range" min="4" max="40" value="14" />
+    </label>
+    <label>
+      Launch speed scale
+      <input id="speedSlider" type="range" min="0.1" max="2" value="0.7" step="0.05" />
+    </label>
+    <label>
+      Debris speed threshold
+      <input id="debrisThreshold" type="range" min="0" max="20" value="10" step="0.5" />
+    </label>
+    <label>
+      Debris amount
+      <input id="debrisAmount" type="range" min="0" max="1" value="0.5" step="0.05" />
+    </label>
+    <label>
+      Debris kick strength
+      <input id="debrisKick" type="range" min="0" max="2" value="1" step="0.05" />
+    </label>
+    <label>
+      Max fragments
+      <input id="maxFragments" type="range" min="1" max="12" value="6" step="1" />
+    </label>
+    <button id="clearBtn">Clear</button>
+  </div>
+
+  <script>
+  (function() {
+    const canvas = document.getElementById('sim');
+    const ctx = canvas.getContext('2d');
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const radiusSlider = document.getElementById('radiusSlider');
+    const speedSlider  = document.getElementById('speedSlider');
+    const clearBtn     = document.getElementById('clearBtn');
+    const debrisThresholdSlider = document.getElementById('debrisThreshold');
+    const debrisAmountSlider    = document.getElementById('debrisAmount');
+    const debrisKickSlider      = document.getElementById('debrisKick');
+    const maxFragmentsSlider    = document.getElementById('maxFragments');
+
+    // Physics constants
+    const G = 0.15;              // Gravitational constant (tuned for visuals)
+    const TIME_STEP = 0.5;       // Simulation time step
+    const SOFTENING = 4.0;       // Softening to avoid extreme forces
+    const MIN_RADIUS = 2.5;      // Minimum debris radius
+    const DENSITY = 1.0;         // Mass density factor
+
+    let bodies = [];
+
+    function createBody(x, y, radius, vx, vy, isDebris = false) {
+      const mass = Math.PI * radius * radius * DENSITY;
+      return {
+        x, y,
+        vx, vy,
+        ax: 0, ay: 0,
+        radius,
+        mass,
+        isDebris,
+        color: isDebris ? '#bbbbff' : '#ffcc66'
+      };
+    }
+
+    // Simple initial star in the center
+    (function addCentralStar() {
+      const r = 26;
+      const star = createBody(canvas.width/2, canvas.height/2, r, 0, 0, false);
+      star.color = '#ffd27f';
+      bodies.push(star);
+    })();
+
+    function computeAccelerations(list) {
+      const n = list.length;
+      for (let i = 0; i < n; i++) {
+        list[i].ax = 0;
+        list[i].ay = 0;
+      }
+      for (let i = 0; i < n; i++) {
+        const bi = list[i];
+        for (let j = i + 1; j < n; j++) {
+          const bj = list[j];
+          const dx = bj.x - bi.x;
+          const dy = bj.y - bi.y;
+          const distSq = dx*dx + dy*dy + SOFTENING*SOFTENING;
+          const dist = Math.sqrt(distSq);
+          const force = G * bi.mass * bj.mass / distSq;
+          const fx = force * dx / dist;
+          const fy = force * dy / dist;
+          bi.ax += fx / bi.mass;
+          bi.ay += fy / bi.mass;
+          bj.ax -= fx / bj.mass;
+          bj.ay -= fy / bj.mass;
+        }
+      }
+    }
+
+    function integrate(list, dt) {
+      computeAccelerations(list);
+      for (const b of list) {
+        b.vx += b.ax * dt;
+        b.vy += b.ay * dt;
+        b.x  += b.vx * dt;
+        b.y  += b.vy * dt;
+      }
+    }
+
+    function handleCollisions(list) {
+      const removed = new Set();
+      const newBodies = [];
+      const n = list.length;
+
+      // Read debris settings from UI
+      const debrisVelocityThreshold = parseFloat(debrisThresholdSlider.value); // e.g. 10
+      const debrisAmountFactor      = parseFloat(debrisAmountSlider.value);    // 0..1
+      const debrisKickFactor        = parseFloat(debrisKickSlider.value);      // 0..2
+      const maxFragmentsSetting     = parseInt(maxFragmentsSlider.value, 10);  // 1..12
+
+      for (let i = 0; i < n; i++) {
+        if (removed.has(i)) continue;
+        const bi = list[i];
+        for (let j = i + 1; j < n; j++) {
+          if (removed.has(j)) continue;
+          const bj = list[j];
+          const dx = bj.x - bi.x;
+          const dy = bj.y - bi.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist < bi.radius + bj.radius) {
+            // Collision
+            const totalMass = bi.mass + bj.mass;
+            const newX = (bi.x * bi.mass + bj.x * bj.mass) / totalMass;
+            const newY = (bi.y * bi.mass + bj.y * bj.mass) / totalMass;
+            const newVx = (bi.vx * bi.mass + bj.vx * bj.mass) / totalMass;
+            const newVy = (bi.vy * bi.mass + bj.vy * bj.mass) / totalMass;
+
+            // Relative impact speed
+            const rvx = bi.vx - bj.vx;
+            const rvy = bi.vy - bj.vy;
+            const relSpeed = Math.hypot(rvx, rvy);
+
+            // Debris fraction scales up with impact speed but is capped,
+            // and is globally scaled by the "Debris amount" slider.
+            const baseDebrisFrac     = 0.05 + 0.05 * debrisAmountFactor;      // 0.05..0.10
+            const extraScale         = 0.02 * debrisAmountFactor;             // 0..0.02
+            const maxExtraDebrisFrac = 0.15 * debrisAmountFactor;             // 0..0.15
+            const extraDebrisFrac    = Math.min(relSpeed * extraScale, maxExtraDebrisFrac);
+            const debrisFrac         = Math.min(baseDebrisFrac + extraDebrisFrac, 0.3);
+
+            const mainMass        = totalMass * (1 - debrisFrac);
+            const debrisMassTotal = totalMass * debrisFrac;
+
+            const mainRadius = Math.sqrt(mainMass / (Math.PI * DENSITY));
+
+            const merged = {
+              x: newX,
+              y: newY,
+              vx: newVx,
+              vy: newVy,
+              ax: 0, ay: 0,
+              radius: mainRadius,
+              mass: mainMass,
+              isDebris: bi.isDebris && bj.isDebris,
+              color: (bi.isDebris && bj.isDebris) ? '#aaaaff' : '#ffb84d'
+            };
+
+            newBodies.push(merged);
+
+            // Only create debris if collision speed exceeds threshold
+            if (debrisMassTotal > 0 && relSpeed > debrisVelocityThreshold) {
+              // Number of fragments increases with relative speed and debrisAmountFactor
+              const baseFragments  = 1;
+              const extraFragments = Math.floor(relSpeed * 0.3 * debrisAmountFactor);
+              const maxFragments   = Math.max(1, maxFragmentsSetting);
+              let fragments        = Math.min(baseFragments + extraFragments, maxFragments);
+              if (fragments < 1) fragments = 1;
+
+              const fragmentMass   = debrisMassTotal / fragments;
+              const fragmentRadius = Math.sqrt(fragmentMass / (Math.PI * DENSITY));
+
+              if (fragmentRadius >= MIN_RADIUS) {
+                // Base eject speed increases with relative speed and is scaled by debrisKickFactor
+                const baseEject   = 2.0 * debrisKickFactor;
+                const speedFactor = 0.4 * debrisKickFactor;
+                const ejectBaseSpeed = baseEject + relSpeed * speedFactor;
+
+                for (let k = 0; k < fragments; k++) {
+                  const angle = Math.random() * Math.PI * 2;
+                  const dirx  = Math.cos(angle);
+                  const diry  = Math.sin(angle);
+
+                  const ejectSpeed = ejectBaseSpeed * (0.7 + 0.6 * Math.random());
+                  const dvx = dirx * ejectSpeed;
+                  const dvy = diry * ejectSpeed;
+
+                  const offsetDist = mainRadius + fragmentRadius + 2;
+                  const debris = {
+                    x: newX + dirx * offsetDist,
+                    y: newY + diry * offsetDist,
+                    vx: newVx + dvx,
+                    vy: newVy + dvy,
+                    ax: 0, ay: 0,
+                    radius: fragmentRadius,
+                    mass: fragmentMass,
+                    isDebris: true,
+                    color: '#a0b4ff'
+                  };
+
+                  if (debris.radius >= MIN_RADIUS) {
+                    newBodies.push(debris);
+                  }
+                }
+              }
+            }
+
+            removed.add(i);
+            removed.add(j);
+            break;
+          }
+        }
+      }
+
+      const result = [];
+      for (let i = 0; i < n; i++) {
+        if (!removed.has(i)) result.push(list[i]);
+      }
+      for (const b of newBodies) {
+        if (b.radius >= MIN_RADIUS) result.push(b);
+      }
+
+      const MAX_BODIES = 400;
+      if (result.length > MAX_BODIES) {
+        result.sort((a, b) => b.mass - a.mass);
+        result.length = MAX_BODIES;
+      }
+
+      return result;
+    }
+
+    let placing = false;
+    let placeStart = { x: 0, y: 0 };
+    let placeCurrent = { x: 0, y: 0 };
+    let previewOrbit = [];
+
+    function toWorldCoords(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      placing = true;
+      const p = toWorldCoords(e.clientX, e.clientY);
+      placeStart = { x: p.x, y: p.y };
+      placeCurrent = { x: p.x, y: p.y };
+      previewOrbit = [];
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!placing) return;
+      const p = toWorldCoords(e.clientX, e.clientY);
+      placeCurrent = { x: p.x, y: p.y };
+      updatePreviewOrbit();
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      if (e.button !== 0) return;
+      if (!placing) return;
+      placing = false;
+      const p = toWorldCoords(e.clientX, e.clientY);
+      placeCurrent = { x: p.x, y: p.y };
+      finalizePlacement();
+      previewOrbit = [];
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      if (placing) {
+        placing = false;
+        previewOrbit = [];
+      }
+    });
+
+    function updatePreviewOrbit() {
+      const dx = placeCurrent.x - placeStart.x;
+      const dy = placeCurrent.y - placeStart.y;
+      const speedScale = parseFloat(speedSlider.value);
+      const vx = dx * 0.03 * speedScale;
+      const vy = dy * 0.03 * speedScale;
+      const radius = parseFloat(radiusSlider.value);
+
+      const simBodies = bodies.map(b => ({...b}));
+      const ghost = createBody(placeStart.x, placeStart.y, radius, vx, vy, false);
+      ghost.color = '#88ff88';
+      simBodies.push(ghost);
+
+      previewOrbit = [];
+      const steps = 220;
+      const dt = TIME_STEP * 1.5;
+      for (let i = 0; i < steps; i++) {
+        computeAccelerations(simBodies);
+        for (const b of simBodies) {
+          b.vx += b.ax * dt;
+          b.vy += b.ay * dt;
+          b.x  += b.vx * dt;
+          b.y  += b.vy * dt;
+        }
+        previewOrbit.push({ x: ghost.x, y: ghost.y });
+      }
+    }
+
+    function finalizePlacement() {
+      const dx = placeCurrent.x - placeStart.x;
+      const dy = placeCurrent.y - placeStart.y;
+      const speedScale = parseFloat(speedSlider.value);
+      const vx = dx * 0.03 * speedScale;
+      const vy = dy * 0.03 * speedScale;
+      const radius = parseFloat(radiusSlider.value);
+      const body = createBody(placeStart.x, placeStart.y, radius, vx, vy, false);
+      bodies.push(body);
+    }
+
+    clearBtn.addEventListener('click', () => {
+      bodies = bodies.filter(b => !b.isDebris && b.mass > 1e6);
+      if (bodies.length === 0) {
+        const r = 26;
+        const star = createBody(canvas.width/2, canvas.height/2, r, 0, 0, false);
+        star.color = '#ffd27f';
+        bodies.push(star);
+      }
+    });
+
+    function draw() {
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const grad = ctx.createRadialGradient(
+        canvas.width/2, canvas.height/2, 0,
+        canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height)
+      );
+      grad.addColorStop(0, '#050810');
+      grad.addColorStop(1, '#000000');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#222';
+      for (let i = 0; i < 120; i++) {
+        const x = (i * 73) % canvas.width;
+        const y = (i * 137) % canvas.height;
+        const s = ((i * 29) % 100) / 100 * 3 + 0.3;
+        ctx.fillRect(x, y, s, s);
+      }
+
+      if (previewOrbit.length > 1) {
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(140, 255, 140, 0.9)';
+        ctx.beginPath();
+        const first = previewOrbit[0];
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < previewOrbit.length; i++) {
+          const p = previewOrbit[i];
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      for (const b of bodies) {
+        ctx.beginPath();
+        ctx.fillStyle = b.color;
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        const gradCore = ctx.createRadialGradient(
+          b.x - b.radius * 0.3,
+          b.y - b.radius * 0.3,
+          0,
+          b.x,
+          b.y,
+          b.radius
+        );
+        gradCore.addColorStop(0, 'rgba(255,255,255,0.9)');
+        gradCore.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gradCore;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (placing) {
+        const dx = placeCurrent.x - placeStart.x;
+        const dy = placeCurrent.y - placeStart.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 2) {
+          ctx.save();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#88ff88';
+          ctx.fillStyle = '#88ff88';
+          ctx.beginPath();
+          ctx.moveTo(placeStart.x, placeStart.y);
+          ctx.lineTo(placeCurrent.x, placeCurrent.y);
+          ctx.stroke();
+
+          const ux = dx / len;
+          const uy = dy / len;
+          const headLen = 10;
+          const hx = placeCurrent.x;
+          const hy = placeCurrent.y;
+          ctx.beginPath();
+          ctx.moveTo(hx, hy);
+          ctx.lineTo(hx - ux * headLen - uy * headLen * 0.6, hy - uy * headLen + ux * headLen * 0.6);
+          ctx.lineTo(hx - ux * headLen + uy * headLen * 0.6, hy - uy * headLen - ux * headLen * 0.6);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+
+        const radius = parseFloat(radiusSlider.value);
+        ctx.save();
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = '#88ff88';
+        ctx.beginPath();
+        ctx.arc(placeStart.x, placeStart.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    function handleBounds(list) {
+      for (const b of list) {
+        const r = b.radius;
+        // Left wall
+        if (b.x - r < 0) {
+          b.x = r;
+          if (b.vx < 0) b.vx = -b.vx;
+        }
+        // Right wall
+        if (b.x + r > canvas.width) {
+          b.x = canvas.width - r;
+          if (b.vx > 0) b.vx = -b.vx;
+        }
+        // Top wall
+        if (b.y - r < 0) {
+          b.y = r;
+          if (b.vy < 0) b.vy = -b.vy;
+        }
+        // Bottom wall
+        if (b.y + r > canvas.height) {
+          b.y = canvas.height - r;
+          if (b.vy > 0) b.vy = -b.vy;
+        }
+      }
+    }
+
+    function step() {
+      integrate(bodies, TIME_STEP);
+      handleBounds(bodies);
+      bodies = handleCollisions(bodies);
+    }
+
+    function loop() {
+      for (let i = 0; i < 2; i++) {
+        step();
+      }
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  })();
+  </script>
+</body>
+</html>
