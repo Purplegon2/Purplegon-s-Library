@@ -699,9 +699,11 @@
         if (!raw) return;
 
         const data = await fetchDefinitionData(raw);
-        if (!data) {
-            showError("Word could not be found");
-            return;
+        if (data && data.definition) {
+          const posPart = data.pos ? ` (${data.pos})` : "";
+          defEl.textContent = data.definition + posPart;
+        } else {
+          defEl.textContent = "Definition not available.";
         }
 
         const info = getWordInfoMock(data.word);
@@ -736,6 +738,7 @@
   </script>
 </body>
 </html>
+
 
 
 
