@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>DVD Teams — rows, collisions, paused by default + scoring by ball</title>
+<style>
+  html, body { height:100%; margin:0; background:#000; color:#ddd; font:14px system-ui,sans-serif; }
+  #canvas { display:block; width:100vw; height:100vh; }
+  #menu { position:fixed; inset:0; display:grid; place-items:center; background:rgba(0,0,0,.85); }
+  #panel { width:min(92vw,720px); padding:18px; border-radius:12px; background:#111; box-shadow:0 10px 30px rgba(0,0,0,.6); }
+  #panel h1 { margin:0 0 12px 0; font-size:18px; color:#fff; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px 16px; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .row label { flex:1 1 auto; }
+  .row input[type="file"] { flex:1 1 60%; }
+  .row input[type="range"], .row input[type="number"] { width:60%; }
+  #play, #start { display:inline-block; margin-top:14px; padding:10px 12px; border-radius:10px; border:0; background:#24a0ed; color:#fff; font-weight:600; cursor:pointer; }
+  #start { background:#2bb673; margin-left:8px; }
+  #play:active, #start:active { transform:translateY(1px); }
+  .hint { opacity:.8; font-size:12px; margin-top:8px; }
+  a.kbd { padding:2px 6px; border-radius:6px; background:#222; color:#ddd; text-decoration:none; }
+</style>
+</head>
+<body>
+  <div id="menu" aria-modal="true" role="dialog">
+    <div id="panel">
+      <h1>DVD Teams — setup</h1>
+      <div class="grid">
+        <div class="row"><label for="bgFile">Background</label><input id="bgFile" type="file" accept="image/*"></div>
+
+        <div class="row"><label for="ballFile">Ball image (optional)</label><input id="ballFile" type="file" accept="image/*"></div>
+
+        <div class="row"><label for="logoFileA">Team A logo</label><input id="logoFileA" type="file" accept="image/*"></div>
+        <div class="row"><label for="countA">Team A teammates</label><input id="countA" type="number" min="1" max="40" step="1" value="4"></div>
+
+        <div class="row"><label for="logoFileB">Team B logo</label><input id="logoFileB" type="file" accept="image/*"></div>
+        <div class="row"><label for="countB">Team B teammates</label><input id="countB" type="number" min="1" max="40" step="1" value="4"></div>
+
+        <div class="row"><label for="speed">Logo speed (px/s)</label><input id="speed" type="range" min="50" max="900" step="10" value="320"><span id="speedVal">320</span></div>
+        <div class="row"><label for="size">Logo size (% of min screen)</label><input id="size" type="range" min="6" max="40" step="1" value="14"><span id="sizeVal">14%</span></div>
+
+        <div class="row"><label for="ballSize">Ball size (% of min screen)</label><input id="ballSize" type="range" min="3" max="18" step="1" value="8"><span id="ballSizeVal">8%</span></div>
+        <div class="row"><label for="spacing">Row spacing (px)</label><input id="spacing" type="range" min="6" max="80" step="2" value="20"><span id="spacingVal">20</span></div>
+      </div>
+
+      <button id="play">Apply & Hide Menu</button>
+      <button id="start">Start Now</button>
+
+      <div class="hint">
+        Default is paused after <a class="kbd">Apply & Hide</a>. Click canvas or press <a class="kbd">Space</a> to toggle pause. <a class="kbd">R</a> reset. <a class="kbd">M</a> menu. Shift+R resets scores.
+      </div>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { alpha:false });
+
+  // Menu els
+  const menu = document.getElementById('menu');
+  const bgInput = document.getElementById('bgFile');
+  const ballInput = document.getElementById('ballFile');
+  const logoInputA = document.getElementById('logoFileA');
+  const logoInputB = document.getElementById('logoFileB');
+  const countAInput = document.getElementById('countA');
+  const countBInput = document.getElementById('countB');
+  const speedInput = document.getElementById('speed');
+  const sizeInput = document.getElementById('size');
+  const ballSizeInput = document.getElementById('ballSize');
+  const spacingInput = document.getElementById('spacing');
+  const speedVal = document.getElementById('speedVal');
+  const sizeVal = document.getElementById('sizeVal');
+  const ballSizeVal = document.getElementById('ballSizeVal');
+  const spacingVal = document.getElementById('spacingVal');
+  const playBtn = document.getElementById('play');
+  const startBtn = document.getElementById('start');
+
+  // Images
+  const bgImg = new Image();
+  const logoImgA = new Image();
+  const logoImgB = new Image();
+  const ballImg  = new Image();
+
+  // Defaults
+  bgImg.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#111"/><stop offset="1" stop-color="#333"/></linearGradient></defs><rect width="1600" height="900" fill="url(#g)"/></svg>`);
+  logoImgA.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><rect rx="24" ry="24" width="400" height="200" fill="#ffffff"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Verdana,Arial,Helvetica,sans-serif" font-size="60" fill="#000">TEAM A</text></svg>`);
+  logoImgB.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><rect rx="24" ry="24" width="400" height="200" fill="#00e0ff"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Verdana,Arial,Helvetica,sans-serif" font-size="60" fill="#000">TEAM B</text></svg>`);
+  ballImg.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><clipPath id="c"><circle cx="100" cy="100" r="96"/></clipPath></defs><circle cx="100" cy="100" r="96" fill="#fff"/><g clip-path="url(#c)" stroke="#111" stroke-width="4" fill="#eee"><polygon points="100,50 135,70 125,110 75,110 65,70" fill="#222"/><polygon points="100,150 130,135 145,105 120,120"/><polygon points="100,150 80,120 55,105 70,135"/><polygon points="65,70 40,90 55,105 75,110"/><polygon points="135,70 160,90 145,105 125,110"/></g></svg>`);
+
+  // State
+  let vw=0, vh=0, dpr=1;
+  let running=false, paused=true;  // paused by default
+  let lastT=performance.now();
+
+  // Params
+  let speed=+speedInput.value;
+  let logoW=0, logoH=0, gap=+spacingInput.value;
+
+  // Physics
+  const mLogo = 3;
+  const mBall = 1;
+  const e = 1;
+  const ballFriction = 1;
+
+  // Objects
+  let sprites = []; // teammates (rects)
+  const ball = { img: ballImg, x:0, y:0, r:0, vx: 0, vy: 0, _inLeftGoal:false, _inRightGoal:false };
+
+  // Scoring and goals
+  let scoreA = 0; // Team A scores on RIGHT goal
+  let scoreB = 0; // Team B scores on LEFT goal
+  let goalW = 60; // set in fitSizes
+  let goalH = 200; // set in fitSizes
+  const GOAL_ALPHA = 0.12;
+
+  // File URLs
+  let bgURL=null, logoURLA=null, logoURLB=null, ballURL=null;
+
+  // ---------- layout ----------
+  function setCanvasSize() {
+    dpr = Math.max(1, window.devicePixelRatio || 1);
+    vw = Math.floor(window.innerWidth);
+    vh = Math.floor(window.innerHeight);
+    canvas.width = Math.floor(vw*dpr);
+    canvas.height = Math.floor(vh*dpr);
+    canvas.style.width = vw+'px';
+    canvas.style.height = vh+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    fitSizes();
+  }
+
+  function fitSizes() {
+    const minSide = Math.min(vw, vh);
+    logoW = Math.max(8, Math.round(minSide * (+sizeInput.value/100)));
+    const arA = (logoImgA.naturalWidth && logoImgA.naturalHeight) ? (logoImgA.naturalWidth/logoImgA.naturalHeight) : 2;
+    const arB = (logoImgB.naturalWidth && logoImgB.naturalHeight) ? (logoImgB.naturalWidth/logoImgB.naturalHeight) : 2;
+    const avgAr = (arA+arB)/2;
+    const _logoH = Math.round(logoW / avgAr);
+    // store only when used
+    
+    const ballR = Math.round(minSide * (+ballSizeInput.value/100) / 2);
+    ball.r = ballR;
+    gap = +spacingInput.value;
+
+    // smaller, vertically centered goals
+    goalW = Math.max(20, Math.round(minSide * 0.04));
+    goalH = Math.max(80, Math.round(vh * 0.30));
+
+    // expose for sprite layout
+    logoH = _logoH;
+  }
+
+  function makeTeam(count, img, side){
+    const ar = (img.naturalWidth && img.naturalHeight) ? (img.naturalWidth/img.naturalHeight) : 2;
+    const w = logoW;
+    const h = Math.round(w / ar);
+
+    // rows based on available height
+    const rowHeight = h + gap;
+    const maxRows = Math.max(1, Math.floor((vh - gap*2) / rowHeight));
+    const rows = Math.min(maxRows, count);
+    const cols = Math.ceil(count / rows);
+
+    // horizontal origin
+    const marginX = 20;
+    const blockW = cols*w + (cols-1)*gap;
+    const startX = side === 'left' ? marginX : Math.max(vw - marginX - blockW, marginX);
+
+    const startY = Math.max(gap, Math.round((vh - (rows*h + (rows-1)*gap))/2));
+
+    const arr = [];
+    let idx = 0;
+    for (let c=0; c<cols; c++){
+      for (let r=0; r<rows; r++){
+        if (idx++ >= count) break;
+        const x = startX + c*(w+gap);
+        const y = startY + r*(h+gap);
+        const a = Math.random()*Math.PI*2;
+        const vx = Math.cos(a), vy = Math.sin(a);
+        arr.push({ team: side, img, x, y, w, h, vx, vy });
+      }
+    }
+    return arr;
+  }
+
+  function placeEntities() {
+    const nA = clampInt(+countAInput.value, 1, 40);
+    const nB = clampInt(+countBInput.value, 1, 40);
+
+    sprites = [
+      ...makeTeam(nA, logoImgA, 'left'),
+      ...makeTeam(nB, logoImgB, 'right')
+    ];
+
+    // ball center
+    ball.x = vw/2; ball.y = vh/2;
+    ball.vx = 140*(Math.random()*2-1);
+    ball.vy = 140*(Math.random()*2-1);
+    ball._inLeftGoal = false;
+    ball._inRightGoal = false;
+
+    // keep ball off any rect slightly
+    sprites.forEach(s=> separateBallFromRect(ball, s));
+  }
+
+  function clampInt(v, lo, hi){ return Math.max(lo, Math.min(hi, (v|0))); }
+
+  // ---------- rendering ----------
+  function drawBackground() {
+    if (bgImg.naturalWidth && bgImg.naturalHeight) {
+      const sw=bgImg.naturalWidth, sh=bgImg.naturalHeight;
+      const k = Math.max(vw/sw, vh/sh);
+      const dw=sw*k, dh=sh*k, dx=(vw-dw)/2, dy=(vh-dh)/2;
+      ctx.drawImage(bgImg, dx, dy, dw, dh);
+    } else { ctx.fillStyle='#000'; ctx.fillRect(0,0,vw,vh); }
+  }
+  function drawSprites() {
+    sprites.forEach(s=>{
+      if (s.img.naturalWidth) ctx.drawImage(s.img, s.x, s.y, s.w, s.h);
+      else { ctx.fillStyle = s.team==='left' ? '#fff' : '#0ef'; ctx.fillRect(s.x, s.y, s.w, s.h); }
+    });
+  }
+  function drawBall() {
+    if (ball.img.naturalWidth) ctx.drawImage(ball.img, ball.x-ball.r, ball.y-ball.r, ball.r*2, ball.r*2);
+    else { ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle='#111'; ctx.stroke(); }
+  }
+
+  function drawGoalsAndScores(){
+    // Centered goal areas
+    const gy = Math.round((vh - goalH) / 2);
+    const leftGoal = { x:0, y:gy, w:goalW, h:goalH };
+    const rightGoal = { x:vw-goalW, y:gy, w:goalW, h:goalH };
+
+    // visualize goals
+    ctx.save();
+    ctx.fillStyle = `rgba(255,255,255,${GOAL_ALPHA})`;
+    ctx.fillRect(leftGoal.x, leftGoal.y, leftGoal.w, leftGoal.h);
+    ctx.fillRect(rightGoal.x, rightGoal.y, rightGoal.w, rightGoal.h);
+
+    // borders
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(leftGoal.x+0.5, leftGoal.y+0.5, leftGoal.w-1, leftGoal.h-1);
+    ctx.strokeRect(rightGoal.x+0.5, rightGoal.y+0.5, rightGoal.w-1, rightGoal.h-1);
+
+    // Scores
+    const pad = 16;
+    const fontSize = Math.max(16, Math.round(Math.min(vw,vh)*0.045));
+    ctx.font = `600 ${fontSize}px system-ui,Segoe UI,Arial`;
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 6;
+
+    // Team A score left top
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${scoreA}`, pad, pad);
+
+    // Team B score right top
+    ctx.textAlign = 'right';
+    ctx.fillText(`${scoreB}`, vw - pad, pad);
+
+    ctx.restore();
+  }
+
+  // ---------- collisions ----------
+  function rectRectResolve(a,b){
+    // axis overlaps
+    const dx1 = (a.x + a.w) - b.x;
+    const dx2 = (b.x + b.w) - a.x;
+    const dy1 = (a.y + a.h) - b.y;
+    const dy2 = (b.y + b.h) - a.y;
+    const penX = Math.min(dx1, dx2);
+    const penY = Math.min(dy1, dy2);
+    if (penX<=0 || penY<=0) return;
+
+    if (penX < penY) {
+      const push = penX/2;
+      if (a.x < b.x) { a.x -= push; b.x += push; } else { a.x += push; b.x -= push; }
+      const tx=a.vx; a.vx=b.vx; b.vx=tx;
+    } else {
+      const push = penY/2;
+      if (a.y < b.y) { a.y -= push; b.y += push; } else { a.y += push; b.y -= push; }
+      const ty=a.vy; a.vy=b.vy; b.vy=ty;
+    }
+  }
+
+  function circleWallReflect(c){
+    if (c.x - c.r <= 0) { c.x = c.r; c.vx = Math.abs(c.vx)*e; }
+    if (c.x + c.r >= vw){ c.x = vw - c.r; c.vx = -Math.abs(c.vx)*e; }
+    if (c.y - c.r <= 0) { c.y = c.r; c.vy = Math.abs(c.vy)*e; }
+    if (c.y + c.r >= vh){ c.y = vh - c.r; c.vy = -Math.abs(c.vy)*e; }
+  }
+
+  function closestPointOnRect(px,py, r){
+    return {
+      x: Math.max(r.x, Math.min(px, r.x + r.w)),
+      y: Math.max(r.y, Math.min(py, r.y + r.h))
+    };
+  }
+
+  function separateBallFromRect(c, r){
+    const q = closestPointOnRect(c.x, c.y, r);
+    let nx = c.x - q.x, ny = c.y - q.y;
+    let dist = Math.hypot(nx, ny);
+    const inside = (dist === 0);
+    if (inside) { // pick shallow axis
+      const left = c.x - r.x, right = (r.x + r.w) - c.x, top = c.y - r.y, bottom = (r.y + r.h) - c.y;
+      const minPen = Math.min(left, right, top, bottom);
+      if (minPen === left) { nx=-1; ny=0; dist=1; c.x = r.x - c.r; }
+      else if (minPen === right){ nx=1; ny=0; dist=1; c.x = r.x + r.w + c.r; }
+      else if (minPen === top)  { nx=0; ny=-1; dist=1; c.y = r.y - c.r; }
+      else                      { nx=0; ny= 1; dist=1; c.y = r.y + r.h + c.r; }
+      return {hit:true, nx, ny, pen:0};
+    }
+    const pen = c.r - dist;
+    if (pen > 0) {
+      nx /= dist; ny /= dist;
+      c.x += nx * pen; c.y += ny * pen;
+      return {hit:true, nx, ny, pen};
+    }
+    return {hit:false};
+  }
+
+  function collideBallLogo(c, r, logoSpeed){
+    const res = separateBallFromRect(c, r);
+    if (!res.hit) return;
+    const nx = res.nx, ny = res.ny;
+
+    // relative velocity along normal (ball vs logo motion vector)
+    const rvx = c.vx - (r.vx * logoSpeed);
+    const rvy = c.vy - (r.vy * logoSpeed);
+    const relVel = rvx*nx + rvy*ny;
+    if (relVel > 0) return; // separating
+
+    const j = -(1 + e) * relVel / (1/mBall + 1/mLogo);
+    const impX = j*nx, impY = j*ny;
+
+    c.vx += impX / mBall;
+    c.vy += impY / mBall;
+
+    // small reaction for the logo
+    r.vx -= (impX / mLogo) / Math.max(1, logoSpeed);
+    r.vy -= (impY / mLogo) / Math.max(1, logoSpeed);
+
+    // tangential kick
+    c.vx += r.vx * 0.2 * logoSpeed;
+    c.vy += r.vy * 0.2 * logoSpeed;
+  }
+
+  // ---------- scoring by BALL entry ----------
+  function circleIntersectsRect(c, r){
+    const qx = Math.max(r.x, Math.min(c.x, r.x + r.w));
+    const qy = Math.max(r.y, Math.min(c.y, r.y + r.h));
+    const dx = c.x - qx, dy = c.y - qy;
+    return (dx*dx + dy*dy) <= (c.r * c.r);
+  }
+
+  function handleBallScoring(){
+    const gy = Math.round((vh - goalH) / 2);
+    const leftGoal = { x:0, y:gy, w:goalW, h:goalH };
+    const rightGoal = { x:vw-goalW, y:gy, w:goalW, h:goalH };
+
+    const inLeft = circleIntersectsRect(ball, leftGoal);
+    const inRight = circleIntersectsRect(ball, rightGoal);
+
+    // Ball entering LEFT goal gives Team B a point
+    if (inLeft && !ball._inLeftGoal) { scoreB++; flash(); }
+    // Ball entering RIGHT goal gives Team A a point
+    if (inRight && !ball._inRightGoal) { scoreA++; flash(); }
+
+    ball._inLeftGoal = inLeft;
+    ball._inRightGoal = inRight;
+  }
+
+  // Simple flash feedback
+  let flashTimer = 0; // seconds
+  function flash(){ flashTimer = 0.25; }
+  function drawFlash(){
+    if (flashTimer <= 0) return;
+    const intensity = Math.min(1, flashTimer/0.25);
+    ctx.save();
+    ctx.fillStyle = `rgba(255,255,255,${0.2*intensity})`;
+    ctx.fillRect(0,0,vw,vh);
+    ctx.restore();
+  }
+
+  // ---------- loop ----------
+  function step(t){
+    if (!running) return;
+
+    const dt = Math.min(0.05, (t - lastT)/1000);
+    lastT = t;
+
+    // advance only when not paused
+    if (!paused) {
+      // move logos
+      const S = speed;
+      sprites.forEach(s=>{
+        s.x += s.vx * S * dt;
+        s.y += s.vy * S * dt;
+        if (s.x <= 0) { s.x = 0; s.vx = Math.abs(s.vx); }
+        if (s.x + s.w >= vw) { s.x = vw - s.w; s.vx = -Math.abs(s.vx); }
+        if (s.y <= 0) { s.y = 0; s.vy = Math.abs(s.vy); }
+        if (s.y + s.h >= vh) { s.y = vh - s.h; s.vy = -Math.abs(s.vy); }
+      });
+
+      // logo-logo collisions
+      for (let i=0;i<sprites.length;i++){
+        for (let j=i+1;j<sprites.length;j++){
+          rectRectResolve(sprites[i], sprites[j]);
+        }
+      }
+
+      // move ball
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+      circleWallReflect(ball);
+
+      // ball vs all logos
+      sprites.forEach(s=> collideBallLogo(ball, s, speed));
+
+      // scoring based on ball entering goals
+      handleBallScoring();
+
+      // damping and flash
+      ball.vx *= ballFriction;
+      ball.vy *= ballFriction;
+      if (flashTimer > 0) flashTimer -= dt;
+    }
+
+    // render
+    drawBackground();
+    drawGoalsAndScores();
+    drawSprites();
+    drawBall();
+    drawFlash();
+
+    requestAnimationFrame(step);
+  }
+
+  // ---------- files ----------
+  function loadFromFile(input, targetImage, setURL){
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    setURL(url);
+    targetImage.onload = ()=>{ fitSizes(); };
+    targetImage.src = url;
+  }
+
+  // ---------- bindings ----------
+  speedInput.addEventListener('input', ()=>{ speedVal.textContent = speedInput.value; });
+  sizeInput.addEventListener('input', ()=>{ sizeVal.textContent  = sizeInput.value + '%'; fitSizes(); });
+  ballSizeInput.addEventListener('input', ()=>{ ballSizeVal.textContent = ballSizeInput.value + '%'; fitSizes(); });
+  spacingInput.addEventListener('input', ()=>{ spacingVal.textContent = spacingInput.value; fitSizes(); });
+
+  bgInput.addEventListener('change', ()=>loadFromFile(bgInput,  bgImg,  u=>{ if(bgURL)URL.revokeObjectURL(bgURL); bgURL=u; }));
+  logoInputA.addEventListener('change',()=>loadFromFile(logoInputA,logoImgA,u=>{ if(logoURLA)URL.revokeObjectURL(logoURLA); logoURLA=u; }));
+  logoInputB.addEventListener('change',()=>loadFromFile(logoInputB,logoImgB,u=>{ if(logoURLB)URL.revokeObjectURL(logoURLB); logoURLB=u; }));
+  ballInput.addEventListener('change', ()=>loadFromFile(ballInput,  ballImg,  u=>{ if(ballURL)URL.revokeObjectURL(ballURL); ballURL=u; }));
+
+  // Apply & hide menu (remain paused)
+  playBtn.addEventListener('click', ()=>{
+    speed = +speedInput.value;
+    setCanvasSize();
+    placeEntities();
+    menu.style.display = 'none';
+    running = true;
+    paused = true; // default paused after apply
+    requestAnimationFrame((t)=>{ lastT=t; step(t); });
+  });
+
+  // Start now (hide menu and unpause)
+  startBtn.addEventListener('click', ()=>{
+    speed = +speedInput.value;
+    setCanvasSize();
+    placeEntities();
+    menu.style.display = 'none';
+    running = true;
+    paused = false;
+    requestAnimationFrame((t)=>{ lastT=t; step(t); });
+  });
+
+  // Hotkeys
+  window.addEventListener('keydown', (e)=>{
+    if (e.key === 'r' || e.key === 'R') { placeEntities(); }                // reset positions only
+    if (e.key === 'm' || e.key === 'M') { running=false; paused=true; menu.style.display='grid'; }
+    if (e.code === 'Space') { e.preventDefault(); if (running){ paused = !paused; } }
+    if ((e.key === 'R' && e.shiftKey) || (e.key === 'r' && e.shiftKey)) { scoreA=0; scoreB=0; } // reset scores
+  });
+
+  // Click to toggle pause
+  canvas.addEventListener('click', ()=>{ if (running) paused = !paused; });
+
+  window.addEventListener('resize', ()=>{ setCanvasSize(); placeEntities(); });
+
+  // Prime labels and draw under menu
+  speedVal.textContent = speedInput.value;
+  sizeVal.textContent = sizeInput.value + '%';
+  ballSizeVal.textContent = ballSizeInput.value + '%';
+  spacingVal.textContent = spacingInput.value;
+
+  setCanvasSize();
+  placeEntities();
+  drawBackground();
+  drawGoalsAndScores();
+  drawSprites();
+  drawBall();
+})();
+</script>
+</body>
+</html>
