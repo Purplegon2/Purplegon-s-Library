@@ -449,12 +449,7 @@
           definition: definition,
         };
       } catch (e) {
-        return {
-          word: wordText,
-          phonetic: phonetic,
-          pos: "Not found",
-          definition: "No definition found",
-        };
+        return null;
       }
     }
 
@@ -752,5 +747,6 @@
   </script>
 </body>
 </html>
+
 
 
