@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mini Browser</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 0.5rem;
+      border-bottom: 1px solid #ccc;
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    #url-input {
+      flex: 1;
+      padding: 0.4rem 0.6rem;
+      border-radius: 4px;
+      border: 1px solid #aaa;
+      font-size: 0.9rem;
+    }
+
+    button {
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      border: 1px solid #555;
+      background: #eee;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    button:hover {
+      background: #ddd;
+    }
+
+    #status {
+      font-size: 0.8rem;
+      color: #555;
+      margin-left: 0.5rem;
+    }
+
+    #view {
+      flex: 1;
+      border: none;
+      width: 100%;
+    }
+
+    .toolbar-left {
+      display: flex;
+      gap: 0.3rem;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="toolbar-left">
+      <button id="back-btn" title="Back">&larr;</button>
+      <button id="forward-btn" title="Forward">&rarr;</button>
+      <button id="reload-btn" title="Reload">&#8635;</button>
+    </div>
+
+    <input
+      type="text"
+      id="url-input"
+      placeholder="Enter a URL (example: https://example.com)"
+    />
+    <button id="go-btn">Go</button>
+
+    <span id="status"></span>
+  </header>
+
+  <iframe id="view" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+
+  <script>
+    const urlInput = document.getElementById("url-input");
+    const goBtn = document.getElementById("go-btn");
+    const view = document.getElementById("view");
+    const statusEl = document.getElementById("status");
+    const backBtn = document.getElementById("back-btn");
+    const forwardBtn = document.getElementById("forward-btn");
+    const reloadBtn = document.getElementById("reload-btn");
+
+    // Simple in-memory history for the iframe
+    const historyStack = [];
+    let historyIndex = -1;
+
+    function normalizeUrl(raw) {
+      let url = raw.trim();
+      if (!url) return null;
+
+      // If it looks like a URL without protocol, prepend https://
+      if (
+        !/^https?:\/\//i.test(url) &&
+        /^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(url)
+      ) {
+        url = "https://" + url;
+      }
+
+      try {
+        return new URL(url).href;
+      } catch {
+        return null;
+      }
+    }
+
+    function updateStatus(message) {
+      statusEl.textContent = message || "";
+    }
+
+    function loadUrl(rawUrl, fromHistory = false) {
+      const normalized = normalizeUrl(rawUrl);
+      if (!normalized) {
+        updateStatus("Invalid URL");
+        return;
+      }
+
+      updateStatus("Loading…");
+      view.src = normalized;
+
+      if (!fromHistory) {
+        // When navigating normally, push to history
+        historyStack.splice(historyIndex + 1);
+        historyStack.push(normalized);
+        historyIndex = historyStack.length - 1;
+      }
+
+      urlInput.value = normalized;
+      updateNavButtons();
+    }
+
+    function updateNavButtons() {
+      backBtn.disabled = historyIndex <= 0;
+      forwardBtn.disabled = historyIndex >= historyStack.length - 1;
+    }
+
+    goBtn.addEventListener("click", () => {
+      loadUrl(urlInput.value);
+    });
+
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        loadUrl(urlInput.value);
+      }
+    });
+
+    view.addEventListener("load", () => {
+      updateStatus("Done");
+    });
+
+    view.addEventListener("error", () => {
+      updateStatus("Failed to load");
+    });
+
+    backBtn.addEventListener("click", () => {
+      if (historyIndex > 0) {
+        historyIndex -= 1;
+        const target = historyStack[historyIndex];
+        loadUrl(target, true);
+      }
+    });
+
+    forwardBtn.addEventListener("click", () => {
+      if (historyIndex < historyStack.length - 1) {
+        historyIndex += 1;
+        const target = historyStack[historyIndex];
+        loadUrl(target, true);
+      }
+    });
+
+    reloadBtn.addEventListener("click", () => {
+      if (historyIndex >= 0) {
+        loadUrl(historyStack[historyIndex], true);
+      }
+    });
+
+    // Optional: load a default page
+    loadUrl("https://example.com");
+  </script>
+</body>
+</html>
