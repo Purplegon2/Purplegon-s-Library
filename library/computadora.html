@@ -1,0 +1,1327 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Atlas25 Virtual Machine</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    color: #fff;
+    font-family: monospace;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* File selection screen */
+  #fileScreen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    text-align: center;
+  }
+  #fileScreen h1 {
+    margin: 0 0 8px 0;
+    font-size: 20px;
+  }
+  #fileScreen p {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+  }
+  #sourceFileInput {
+    margin-bottom: 4px;
+  }
+  #startVmBtn {
+    padding: 4px 10px;
+    font-family: monospace;
+    background: #111;
+    color: #fff;
+    border: 1px solid #444;
+    cursor: pointer;
+  }
+  #fileStatus {
+    font-size: 12px;
+    color: #aaa;
+    max-width: 80%;
+    word-break: break-all;
+  }
+
+  /* VM screen */
+  #vmContainer {
+    display: none; /* hidden until file chosen and VM started */
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 8px;
+  }
+  #monitorFrame {
+    border: 4px solid #777;
+    padding: 4px;
+    box-sizing: content-box;
+    max-width: 90vw;
+    max-height: 80vh;
+  }
+  #monitor {
+    display: block;
+    width: 100%;
+    height: auto;
+    image-rendering: pixelated;
+  }
+  #keyboardWrapper {
+    width: 80%;
+    max-width: 900px;
+  }
+  #keyboardToggle {
+    cursor: pointer;
+    text-align: center;
+    border: 1px solid #444;
+    padding: 4px;
+    margin-bottom: 4px;
+    user-select: none;
+    background: #111;
+  }
+  #keyboardPanel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .key-row {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    flex-wrap: nowrap;
+  }
+  .key {
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    border: 4px solid #000;
+    background: #fff;
+    color: #000;
+    font-family: monospace;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .key.active {
+    background: #000;
+    color: #fff;
+  }
+
+  /* Debug overlay */
+  #debugOverlay {
+    position: fixed;
+    top: 5%;
+    left: 5%;
+    right: 5%;
+    bottom: 5%;
+    background: rgba(0,0,0,0.9);
+    color: #0f0;
+    border: 2px solid #0f0;
+    padding: 8px;
+    display: none;
+    z-index: 9999;
+    overflow: auto;
+    font-size: 12px;
+  }
+  #debugTop {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  #cpuState {
+    white-space: pre;
+    min-width: 220px;
+  }
+  #memDump {
+    white-space: pre;
+    max-height: 40vh;
+    overflow: auto;
+    border: 1px solid #0f0;
+    padding: 4px;
+  }
+  #memEdit {
+    width: 100%;
+    height: 80px;
+    background: #111;
+    color: #0f0;
+    border: 1px solid #0f0;
+    margin-top: 4px;
+  }
+  #disasmView {
+    width: 100%;
+    height: 160px;
+    background: #111;
+    color: #0f0;
+    border: 1px solid #0f0;
+    margin-top: 4px;
+    white-space: pre;
+    overflow: auto;
+  }
+  .debug-buttons {
+    margin-top: 4px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  button.debug-btn {
+    background: #111;
+    color: #0f0;
+    border: 1px solid #0f0;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<!-- Screen 0: file selection -->
+<div id="fileScreen">
+  <h1>Atlas25 Virtual Machine</h1>
+  <p>Select a source file to use as <code>mainSource</code>, then start the VM.</p>
+  <input type="file" id="sourceFileInput">
+  <button id="startVmBtn">Start VM</button>
+  <div id="fileStatus"></div>
+</div>
+
+<!-- Screen 1: VM -->
+<div id="vmContainer">
+  <div id="monitorFrame">
+    <canvas id="monitor" width="640" height="480"></canvas>
+  </div>
+  <div id="keyboardWrapper">
+    <div id="keyboardToggle">Keyboard ▼</div>
+    <div id="keyboardPanel"></div>
+  </div>
+</div>
+
+<div id="debugOverlay">
+  <div id="debugTop">
+    <div id="cpuState"></div>
+    <div>
+      Press ` to close this debug view.
+      <div class="debug-buttons">
+        <button class="debug-btn" id="applyMemBtn">Apply hex to memory</button>
+        <button class="debug-btn" id="disasmBtn">Disassemble memory</button>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div>Memory hex dump (6 KB):</div>
+    <pre id="memDump"></pre>
+  </div>
+  <div>
+    <div>Memory editor (hex bytes from address 0000):</div>
+    <textarea id="memEdit" placeholder="e.g. 00 FF 10 20 ..."></textarea>
+  </div>
+  <div>
+    <div>Disassembly:</div>
+    <textarea id="disasmView" readonly></textarea>
+  </div>
+</div>
+
+<script>
+(function(){
+  const MEM_SIZE = 6 * 1024; // 6 KB
+  const SCREEN_WIDTH = 640;
+  const SCREEN_HEIGHT = 480;
+
+  // Memory-mapped I/O
+  const IO_BASE           = 0x17E0;
+  const IO_X_LO           = IO_BASE + 0x00;
+  const IO_X_HI           = IO_BASE + 0x01;
+  const IO_Y_LO           = IO_BASE + 0x02;
+  const IO_Y_HI           = IO_BASE + 0x03;
+  const IO_COLOR          = IO_BASE + 0x04;
+  const IO_TONE_FREQ_LO   = IO_BASE + 0x05;
+  const IO_TONE_FREQ_HI   = IO_BASE + 0x06;
+  const IO_TONE_DUR_LO    = IO_BASE + 0x07;
+  const IO_TONE_DUR_HI    = IO_BASE + 0x08;
+  const IO_DISK_PROG_ID   = IO_BASE + 0x0B;
+  const IO_BLIT_SRC_LO    = IO_BASE + 0x0C;
+  const IO_BLIT_SRC_HI    = IO_BASE + 0x0D;
+  const IO_BLIT_DST_X_LO  = IO_BASE + 0x0E;
+  const IO_BLIT_DST_X_HI  = IO_BASE + 0x0F;
+  const IO_BLIT_DST_Y_LO  = IO_BASE + 0x10;
+  const IO_BLIT_DST_Y_HI  = IO_BASE + 0x11;
+  const IO_BLIT_COLOR     = IO_BASE + 0x12;
+
+  // Opcodes
+  const OPC_NOP  = 0x00;
+  const OPC_LDAI = 0x01;
+  const OPC_LDAM = 0x02;
+  const OPC_STAM = 0x03;
+  const OPC_ADDI = 0x04;
+  const OPC_SUBI = 0x05;
+  const OPC_INCA = 0x06;
+  const OPC_JMP  = 0x07;
+  const OPC_JZ   = 0x08;
+  const OPC_JNZ  = 0x09;
+  const OPC_CMPI = 0x0A;
+  const OPC_HLT  = 0x0B;
+  const OPC_SYS  = 0xF0;
+
+  // Syscall IDs
+  const SYS_READ_KEY     = 0x01;
+  const SYS_VIDEO_CLEAR  = 0x02;
+  const SYS_VIDEO_PSET   = 0x03;
+  const SYS_SPEAKER_TONE = 0x04;
+  const SYS_DISK_LOAD    = 0x10;
+  const SYS_VIDEO_BLIT   = 0x11;
+
+  // DOM references for screens
+  const fileScreen      = document.getElementById('fileScreen');
+  const vmContainer     = document.getElementById('vmContainer');
+  const sourceFileInput = document.getElementById('sourceFileInput');
+  const startVmBtn      = document.getElementById('startVmBtn');
+  const fileStatus      = document.getElementById('fileStatus');
+
+  // Canvas
+  const canvas = document.getElementById('monitor');
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+  const pixels = imageData.data;
+  let needsVideoUpdate = true;
+
+  function clearScreen(colorByte = 0) {
+    const c = colorByte & 0xFF;
+    for (let i = 0; i < pixels.length; i += 4) {
+      pixels[i] = c;
+      pixels[i+1] = c;
+      pixels[i+2] = c;
+      pixels[i+3] = 255;
+    }
+    needsVideoUpdate = true;
+  }
+
+  function setPixel(x, y, colorByte) {
+    if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
+    const idx = (y * SCREEN_WIDTH + x) * 4;
+    const c = colorByte & 0xFF;
+    pixels[idx] = c;
+    pixels[idx+1] = c;
+    pixels[idx+2] = c;
+    pixels[idx+3] = 255;
+    needsVideoUpdate = true;
+  }
+
+  function drawBootIndicator() {
+    const cx = (SCREEN_WIDTH >> 1) - 1;
+    const cy = (SCREEN_HEIGHT >> 1) - 1;
+    setPixel(cx,     cy,     255);
+    setPixel(cx + 1, cy,     255);
+    setPixel(cx,     cy + 1, 255);
+    setPixel(cx + 1, cy + 1, 255);
+  }
+
+  function flushVideo() {
+    if (needsVideoUpdate && !errorMode) {
+      ctx.putImageData(imageData, 0, 0);
+      needsVideoUpdate = false;
+    }
+  }
+
+  // Audio
+  let audioCtx = null;
+  let errorOscillators = [];
+  let errorGain = null;
+
+  function ensureAudioContext() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        audioCtx = new AC();
+      }
+    }
+  }
+
+  function playTone(freq, durationMs) {
+    if (errorMode) return;
+    ensureAudioContext();
+    if (!audioCtx) return;
+
+    const now = audioCtx.currentTime;
+    const duration = (durationMs || 100) / 1000;
+
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.0, now);
+    gain.gain.linearRampToValueAtTime(0.4, now + 0.01);
+    gain.gain.linearRampToValueAtTime(0.0, now + duration);
+
+    const osc1 = audioCtx.createOscillator();
+    osc1.type = 'square';
+    osc1.frequency.setValueAtTime(freq, now);
+
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = 'sawtooth';
+    osc2.frequency.setValueAtTime(freq * 1.03, now);
+
+    const osc3 = audioCtx.createOscillator();
+    osc3.type = 'triangle';
+    osc3.frequency.setValueAtTime(freq * 0.49, now);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    osc3.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc3.start(now);
+    osc1.stop(now + duration + 0.05);
+    osc2.stop(now + duration + 0.05);
+    osc3.stop(now + duration + 0.05);
+  }
+
+  function startErrorTone() {
+    ensureAudioContext();
+    if (!audioCtx) return;
+    if (errorOscillators.length > 0) return;
+
+    errorGain = audioCtx.createGain();
+    errorGain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+
+    const freqs = [220, 329, 451, 593, 719];
+    for (let f of freqs) {
+      const o = audioCtx.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(f, audioCtx.currentTime);
+      o.connect(errorGain);
+      o.start();
+      errorOscillators.push(o);
+    }
+    errorGain.connect(audioCtx.destination);
+  }
+
+  function stopNormalAudio() {
+    // one-shot tones end naturally
+  }
+
+  // VM state
+  const mem = new Uint8Array(MEM_SIZE);
+
+  let PC = 0;
+  let A = 0;
+  let Z = 0;
+  let halted = false;
+  let stepCount = 0;
+  let errorMode = false;
+
+  function read8(addr) {
+    if (addr < 0 || addr >= MEM_SIZE) {
+      triggerError('Memory read OOB @ ' + addr);
+      return 0;
+    }
+    return mem[addr];
+  }
+
+  function write8(addr, value) {
+    if (addr < 0 || addr >= MEM_SIZE) {
+      triggerError('Memory write OOB @ ' + addr);
+      return;
+    }
+    mem[addr] = value & 0xFF;
+  }
+
+  function read16(addr) {
+    const lo = read8(addr);
+    const hi = read8(addr + 1);
+    return (lo | (hi << 8)) & 0xFFFF;
+  }
+
+  function setZFlag(v) {
+    Z = ((v & 0xFF) === 0) ? 1 : 0;
+  }
+
+  function triggerError(msg) {
+    if (errorMode) return;
+    errorMode = true;
+    halted = true;
+    console.error('VM ERROR:', msg);
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      pixels[i]   = 255;
+      pixels[i+1] = 255;
+      pixels[i+2] = 255;
+      pixels[i+3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    stopNormalAudio();
+    startErrorTone();
+  }
+
+  // Keyboard buffer
+  let keyBuffer = [];
+
+  function queueKey(code) {
+    if (errorMode) return;
+    keyBuffer.push(code & 0xFF);
+  }
+
+  function sysReadKey() {
+    let code = 0;
+    if (keyBuffer.length > 0) {
+      code = keyBuffer[keyBuffer.length - 1];
+      keyBuffer.length = 0;
+    }
+    A = code & 0xFF;
+    setZFlag(A);
+  }
+
+  // Disk programs
+  let diskPrograms = [];
+
+  function sysDiskLoad() {
+    const id = mem[IO_DISK_PROG_ID] & 0xFF;
+    const prog = diskPrograms[id];
+    if (!prog) {
+      triggerError('Disk program ' + id + ' not found');
+      return;
+    }
+    const start = prog.origin >>> 0;
+    const bytes = prog.bytes;
+    if (start + bytes.length > MEM_SIZE) {
+      triggerError('Disk load overflow');
+      return;
+    }
+    for (let i = 0; i < bytes.length; i++) {
+      mem[start + i] = bytes[i];
+    }
+  }
+
+  function sysVideoClear() {
+    clearScreen(0);
+  }
+
+  function sysVideoPSet() {
+    const x = mem[IO_X_LO] | (mem[IO_X_HI] << 8);
+    const y = mem[IO_Y_LO] | (mem[IO_Y_HI] << 8);
+    const c = mem[IO_COLOR];
+    setPixel(x, y, c);
+  }
+
+  function sysVideoBlit8x8() {
+    const src = mem[IO_BLIT_SRC_LO] | (mem[IO_BLIT_SRC_HI] << 8);
+    const x0 = mem[IO_BLIT_DST_X_LO] | (mem[IO_BLIT_DST_X_HI] << 8);
+    const y0 = mem[IO_BLIT_DST_Y_LO] | (mem[IO_BLIT_DST_Y_HI] << 8);
+    const color = mem[IO_BLIT_COLOR];
+    for (let row = 0; row < 8; row++) {
+      const b = read8(src + row);
+      for (let bit = 0; bit < 8; bit++) {
+        if (b & (1 << (7 - bit))) {
+          setPixel(x0 + bit, y0 + row, color);
+        }
+      }
+    }
+  }
+
+  function sysSpeakerTone() {
+    const freq = (mem[IO_TONE_FREQ_LO] | (mem[IO_TONE_FREQ_HI] << 8)) & 0xFFFF;
+    const dur  = (mem[IO_TONE_DUR_LO]  | (mem[IO_TONE_DUR_HI]  << 8)) & 0xFFFF;
+    if (freq > 0 && dur > 0) {
+      playTone(freq, dur);
+    }
+  }
+
+  function handleSyscall(id) {
+    if (errorMode) return;
+    switch (id) {
+      case SYS_READ_KEY:     sysReadKey();      break;
+      case SYS_VIDEO_CLEAR:  sysVideoClear();   break;
+      case SYS_VIDEO_PSET:   sysVideoPSet();    break;
+      case SYS_SPEAKER_TONE: sysSpeakerTone();  break;
+      case SYS_DISK_LOAD:    sysDiskLoad();     break;
+      case SYS_VIDEO_BLIT:   sysVideoBlit8x8(); break;
+      default:
+        triggerError('Illegal syscall ' + id);
+        break;
+    }
+  }
+
+  // CPU
+  function stepCPU() {
+    if (errorMode || halted) return;
+    if (PC < 0 || PC >= MEM_SIZE) {
+      triggerError('PC out of range ' + PC);
+      return;
+    }
+    const op = read8(PC);
+    switch (op) {
+      case OPC_NOP:
+        PC = (PC + 1) & 0xFFFF;
+        break;
+      case OPC_LDAI: {
+        const v = read8(PC + 1);
+        A = v;
+        setZFlag(A);
+        PC = (PC + 2) & 0xFFFF;
+        break;
+      }
+      case OPC_LDAM: {
+        const addr = read16(PC + 1);
+        const v = read8(addr);
+        A = v;
+        setZFlag(A);
+        PC = (PC + 3) & 0xFFFF;
+        break;
+      }
+      case OPC_STAM: {
+        const addr = read16(PC + 1);
+        write8(addr, A);
+        PC = (PC + 3) & 0xFFFF;
+        break;
+      }
+      case OPC_ADDI: {
+        const v = read8(PC + 1);
+        A = (A + v) & 0xFF;
+        setZFlag(A);
+        PC = (PC + 2) & 0xFFFF;
+        break;
+      }
+      case OPC_SUBI: {
+        const v = read8(PC + 1);
+        A = (A - v) & 0xFF;
+        setZFlag(A);
+        PC = (PC + 2) & 0xFFFF;
+        break;
+      }
+      case OPC_INCA: {
+        A = (A + 1) & 0xFF;
+        setZFlag(A);
+        PC = (PC + 1) & 0xFFFF;
+        break;
+      }
+      case OPC_JMP: {
+        const target = read16(PC + 1);
+        PC = target & 0xFFFF;
+        break;
+      }
+      case OPC_JZ: {
+        const target = read16(PC + 1);
+        if (Z) PC = target & 0xFFFF;
+        else PC = (PC + 3) & 0xFFFF;
+        break;
+      }
+      case OPC_JNZ: {
+        const target = read16(PC + 1);
+        if (!Z) PC = target & 0xFFFF;
+        else PC = (PC + 3) & 0xFFFF;
+        break;
+      }
+      case OPC_CMPI: {
+        const v = read8(PC + 1);
+        setZFlag((A - v) & 0xFF);
+        PC = (PC + 2) & 0xFFFF;
+        break;
+      }
+      case OPC_HLT:
+        halted = true;
+        PC = (PC + 1) & 0xFFFF;
+        break;
+      case OPC_SYS: {
+        const id = read8(PC + 1);
+        PC = (PC + 2) & 0xFFFF;
+        handleSyscall(id);
+        break;
+      }
+      default:
+        triggerError('Illegal opcode ' + op.toString(16));
+        return;
+    }
+    stepCount++;
+  }
+
+  // Assembler
+  function assemble(source, origin) {
+    origin = origin >>> 0;
+    const lines = source.split('\n');
+    const labels = {};
+    const ops = [];
+    let pc = origin;
+
+    function trimComment(line) {
+      const i = line.indexOf(';');
+      if (i >= 0) return line.slice(0, i);
+      return line;
+    }
+
+    // First pass
+    for (let ln = 0; ln < lines.length; ln++) {
+      let txt = trimComment(lines[ln]).trim();
+      if (!txt) continue;
+
+      const colonIdx = txt.indexOf(':');
+      if (colonIdx >= 0) {
+        const label = txt.slice(0, colonIdx).trim();
+        if (label.length > 0) {
+          labels[label] = pc;
+        }
+        txt = txt.slice(colonIdx + 1).trim();
+        if (!txt) continue;
+      }
+
+      const firstSpace = txt.indexOf(' ');
+      let mnemonic = txt;
+      let operandStr = '';
+      if (firstSpace >= 0) {
+        mnemonic = txt.slice(0, firstSpace);
+        operandStr = txt.slice(firstSpace + 1).trim();
+      }
+      mnemonic = mnemonic.toUpperCase();
+      const operands = operandStr ? operandStr.split(',').map(s => s.trim()).filter(s => s.length) : [];
+      let size = 0;
+
+      switch (mnemonic) {
+        case 'DB':
+          size = operands.length;
+          break;
+        case 'NOP':
+        case 'INC':
+        case 'HLT':
+          size = 1;
+          break;
+        case 'LDA':
+        case 'ADD':
+        case 'SUB':
+        case 'CMP':
+          if (operands.length !== 1) throw new Error('Wrong operand count for ' + mnemonic);
+          if (operands[0].startsWith('#')) size = 2;
+          else size = 3;
+          break;
+        case 'STA':
+          size = 3;
+          break;
+        case 'JMP':
+        case 'JZ':
+        case 'JNZ':
+          size = 3;
+          break;
+        case 'SYS':
+          size = 2;
+          break;
+        default:
+          throw new Error('Unknown mnemonic: ' + mnemonic + ' at line ' + (ln+1));
+      }
+
+      ops.push({ mnemonic, operands, line: ln + 1, pc });
+      pc += size;
+    }
+
+    const finalSize = pc - origin;
+    const bytes = new Uint8Array(finalSize);
+
+    function parseValue(tok) {
+      if (!tok) return 0;
+      if (/^'.'$/.test(tok)) {
+        return tok.charCodeAt(1) & 0xFF;
+      }
+      if (tok[0] === '$') {
+        return parseInt(tok.slice(1), 16) >>> 0;
+      }
+      if (/^[0-9]+$/.test(tok)) {
+        return parseInt(tok, 10) >>> 0;
+      }
+      if (tok in labels) {
+        return labels[tok] >>> 0;
+      }
+      throw new Error('Unknown value/label "' + tok + '"');
+    }
+
+    for (const op of ops) {
+      let addr = op.pc;
+      function emit(b) {
+        const idx = addr - origin;
+        if (idx < 0 || idx >= bytes.length) {
+          throw new Error('Assembler emit out of range');
+        }
+        bytes[idx] = b & 0xFF;
+        addr++;
+      }
+
+      const m = op.mnemonic;
+      const o = op.operands;
+
+      switch (m) {
+        case 'DB':
+          for (const tok of o) {
+            const v = parseValue(tok);
+            emit(v);
+          }
+          break;
+
+        case 'NOP':
+          emit(OPC_NOP);
+          break;
+        case 'INC':
+          emit(OPC_INCA);
+          break;
+        case 'HLT':
+          emit(OPC_HLT);
+          break;
+
+        case 'LDA': {
+          const operand = o[0];
+          if (operand.startsWith('#')) {
+            emit(OPC_LDAI);
+            emit(parseValue(operand.slice(1)));
+          } else {
+            emit(OPC_LDAM);
+            const v = parseValue(operand);
+            emit(v & 0xFF);
+            emit((v >> 8) & 0xFF);
+          }
+          break;
+        }
+        case 'STA': {
+          emit(OPC_STAM);
+          const v = parseValue(o[0]);
+          emit(v & 0xFF);
+          emit((v >> 8) & 0xFF);
+          break;
+        }
+        case 'ADD': {
+          const operand = o[0];
+          emit(OPC_ADDI);
+          emit(parseValue(operand.replace(/^#/, '')));
+          break;
+        }
+        case 'SUB': {
+          const operand = o[0];
+          emit(OPC_SUBI);
+          emit(parseValue(operand.replace(/^#/, '')));
+          break;
+        }
+        case 'CMP': {
+          const operand = o[0];
+          emit(OPC_CMPI);
+          emit(parseValue(operand.replace(/^#/, '')));
+          break;
+        }
+        case 'JMP': {
+          emit(OPC_JMP);
+          const v = parseValue(o[0]);
+          emit(v & 0xFF);
+          emit((v >> 8) & 0xFF);
+          break;
+        }
+        case 'JZ': {
+          emit(OPC_JZ);
+          const v = parseValue(o[0]);
+          emit(v & 0xFF);
+          emit((v >> 8) & 0xFF);
+          break;
+        }
+        case 'JNZ': {
+          emit(OPC_JNZ);
+          const v = parseValue(o[0]);
+          emit(v & 0xFF);
+          emit((v >> 8) & 0xFF);
+          break;
+        }
+        case 'SYS': {
+          emit(OPC_SYS);
+          const operand = o[0];
+          const v = parseValue(operand.replace(/^#/, ''));
+          emit(v & 0xFF);
+          break;
+        }
+        default:
+          throw new Error('Assembler cannot encode ' + m);
+      }
+    }
+
+    return { origin, bytes };
+  }
+
+  // Preprocess <label / >label in main.asm
+  function preprocessAngleOperators(src, origin) {
+    const lines = src.split('\n');
+    const labels = {};
+    let pc = origin >>> 0;
+
+    function trimComment(line) {
+      const i = line.indexOf(';');
+      if (i >= 0) return line.slice(0, i);
+      return line;
+    }
+
+    // simple first pass for labels/sizes
+    for (let ln = 0; ln < lines.length; ln++) {
+      let txt = trimComment(lines[ln]).trim();
+      if (!txt) continue;
+      const colonIdx = txt.indexOf(':');
+      if (colonIdx >= 0) {
+        const label = txt.slice(0, colonIdx).trim();
+        if (label) labels[label] = pc;
+        txt = txt.slice(colonIdx + 1).trim();
+        if (!txt) continue;
+      }
+      const firstSpace = txt.indexOf(' ');
+      let mnemonic = txt;
+      let operandStr = '';
+      if (firstSpace >= 0) {
+        mnemonic = txt.slice(0, firstSpace);
+        operandStr = txt.slice(firstSpace + 1).trim();
+      }
+      mnemonic = mnemonic.toUpperCase();
+      const operands = operandStr ? operandStr.split(',').map(s => s.trim()).filter(s => s.length) : [];
+      let size = 0;
+      switch (mnemonic) {
+        case 'DB':
+          size = operands.length;
+          break;
+        case 'NOP':
+        case 'INC':
+        case 'HLT':
+          size = 1;
+          break;
+        case 'LDA':
+        case 'ADD':
+        case 'SUB':
+        case 'CMP':
+          size = operands[0] && operands[0].startsWith('#') ? 2 : 3;
+          break;
+        case 'STA':
+          size = 3;
+          break;
+        case 'JMP':
+        case 'JZ':
+        case 'JNZ':
+          size = 3;
+          break;
+        case 'SYS':
+          size = 2;
+          break;
+        default:
+          size = 0;
+      }
+      pc += size;
+    }
+
+    function replaceAngles(line) {
+      return line.replace(/([<>])([A-Za-z_][A-Za-z0-9_]*)/g, (m, sign, name) => {
+        if (!(name in labels)) return m;
+        const addr = labels[name] >>> 0;
+        if (sign === '<') {
+          return '$' + (addr & 0xFF).toString(16);
+        } else {
+          return '$' + ((addr >> 8) & 0xFF).toString(16);
+        }
+      });
+    }
+
+    return lines.map(replaceAngles).join('\n');
+  }
+
+  // Programs
+  const loaderSource = `
+; Loader at 0x0000: loads boot program (disk id 0) and jumps to 0x0200
+
+start:
+    LDA #0
+    STA $17EB
+
+    SYS #$10
+
+    JMP $0200
+
+    HLT
+`;
+
+  const bootSource = `
+; Boot code at 0x0200: clear screen, beep, load main (id 1), jump to 0x0400
+
+boot_start:
+    SYS #$02
+
+    LDA #$B8
+    STA $17E5
+    LDA #$01
+    STA $17E6
+    LDA #$64
+    STA $17E7
+    LDA #$00
+    STA $17E8
+    SYS #$04
+
+    LDA #1
+    STA $17EB
+    SYS #$10
+
+    JMP $0400
+
+    HLT
+`;
+
+  // This will be replaced by the selected file before initVM() is called.
+  let mainSource = 'HLT';
+
+  // Debug overlay
+  const debugOverlay = document.getElementById('debugOverlay');
+  const cpuStateEl = document.getElementById('cpuState');
+  const memDumpEl = document.getElementById('memDump');
+  const memEditEl = document.getElementById('memEdit');
+  const disasmViewEl = document.getElementById('disasmView');
+  const applyMemBtn = document.getElementById('applyMemBtn');
+  const disasmBtn = document.getElementById('disasmBtn');
+
+  function hex(n, w) {
+    return (n >>> 0).toString(16).toUpperCase().padStart(w, '0');
+  }
+
+  function updateCpuState() {
+    const op = (PC >=0 && PC < MEM_SIZE) ? mem[PC] : 0;
+    let opname = '??';
+    switch (op) {
+      case OPC_NOP:  opname = 'NOP';      break;
+      case OPC_LDAI: opname = 'LDA #';    break;
+      case OPC_LDAM: opname = 'LDA mem';  break;
+      case OPC_STAM: opname = 'STA mem';  break;
+      case OPC_ADDI: opname = 'ADD #';    break;
+      case OPC_SUBI: opname = 'SUB #';    break;
+      case OPC_INCA: opname = 'INC';      break;
+      case OPC_JMP:  opname = 'JMP';      break;
+      case OPC_JZ:   opname = 'JZ';       break;
+      case OPC_JNZ:  opname = 'JNZ';      break;
+      case OPC_CMPI: opname = 'CMP #';    break;
+      case OPC_HLT:  opname = 'HLT';      break;
+      case OPC_SYS:  opname = 'SYS';      break;
+    }
+    cpuStateEl.textContent =
+      'PC: 0x' + hex(PC, 4) + '\n' +
+      'A:  0x' + hex(A, 2) + ' (' + A + ')\n' +
+      'Z:  ' + Z + '\n' +
+      'Halted: ' + halted + '\n' +
+      'Error:  ' + errorMode + '\n' +
+      'Steps:  ' + stepCount + '\n' +
+      'Current opcode: 0x' + hex(op, 2) + ' (' + opname + ')';
+  }
+
+  function updateMemDump() {
+    let lines = [];
+    for (let addr = 0; addr < MEM_SIZE; addr += 16) {
+      let line = hex(addr, 4) + ': ';
+      for (let i = 0; i < 16 && addr + i < MEM_SIZE; i++) {
+        line += hex(mem[addr + i], 2) + ' ';
+      }
+      lines.push(line);
+    }
+    memDumpEl.textContent = lines.join('\n');
+  }
+
+  function disassembleMemory() {
+    let out = [];
+    let addr = 0;
+    while (addr < MEM_SIZE) {
+      const here = addr;
+      const op = mem[addr];
+      let line = (here === PC ? '>' : ' ') + hex(here, 4) + ': ';
+      function byte(offset) {
+        const a = here + offset;
+        return a < MEM_SIZE ? mem[a] : 0;
+      }
+      switch (op) {
+        case OPC_NOP:
+          line += 'NOP';
+          addr += 1;
+          break;
+        case OPC_LDAI:
+          line += 'LDA #' + '0x' + hex(byte(1), 2);
+          addr += 2;
+          break;
+        case OPC_LDAM:
+          line += 'LDA $' + hex(byte(1) | (byte(2) << 8), 4);
+          addr += 3;
+          break;
+        case OPC_STAM:
+          line += 'STA $' + hex(byte(1) | (byte(2) << 8), 4);
+          addr += 3;
+          break;
+        case OPC_ADDI:
+          line += 'ADD #' + '0x' + hex(byte(1), 2);
+          addr += 2;
+          break;
+        case OPC_SUBI:
+          line += 'SUB #' + '0x' + hex(byte(1), 2);
+          addr += 2;
+          break;
+        case OPC_INCA:
+          line += 'INC';
+          addr += 1;
+          break;
+        case OPC_JMP:
+          line += 'JMP $' + hex(byte(1) | (byte(2) << 8), 4);
+          addr += 3;
+          break;
+        case OPC_JZ:
+          line += 'JZ $' + hex(byte(1) | (byte(2) << 8), 4);
+          addr += 3;
+          break;
+        case OPC_JNZ:
+          line += 'JNZ $' + hex(byte(1) | (byte(2) << 8), 4);
+          addr += 3;
+          break;
+        case OPC_CMPI:
+          line += 'CMP #' + '0x' + hex(byte(1), 2);
+          addr += 2;
+          break;
+        case OPC_HLT:
+          line += 'HLT';
+          addr += 1;
+          break;
+        case OPC_SYS:
+          line += 'SYS #' + '0x' + hex(byte(1), 2);
+          addr += 2;
+          break;
+        default:
+          line += 'DB  0x' + hex(op, 2);
+          addr += 1;
+          break;
+      }
+      out.push(line);
+    }
+    return out.join('\n');
+  }
+
+  function updateDebugOverlay() {
+    updateCpuState();
+    updateMemDump();
+  }
+
+  function toggleDebugOverlay() {
+    if (debugOverlay.style.display === 'block') {
+      debugOverlay.style.display = 'none';
+    } else {
+      debugOverlay.style.display = 'block';
+      updateDebugOverlay();
+    }
+  }
+
+  applyMemBtn.addEventListener('click', function(){
+    const txt = memEditEl.value;
+    const tokens = txt.trim().split(/[\s,]+/).filter(t => t.length > 0);
+    for (let i = 0; i < tokens.length && i < MEM_SIZE; i++) {
+      const v = parseInt(tokens[i], 16);
+      if (!isNaN(v)) {
+        mem[i] = v & 0xFF;
+      }
+    }
+    updateMemDump();
+  });
+
+  disasmBtn.addEventListener('click', function(){
+    disasmViewEl.value = disassembleMemory();
+  });
+
+  // On-screen keyboard
+  const keyboardPanel = document.getElementById('keyboardPanel');
+  const keyboardToggle = document.getElementById('keyboardToggle');
+  const virtualKeyMap = {};
+
+  const keyboardLayout = [
+    ['1','2','3','4','5','6','7','8','9','0','-','='],
+    ['Q','W','E','R','T','Y','U','I','O','P','[',']'],
+    ['A','S','D','F','G','H','J','K','L',';',"'",'Enter'],
+    ['Z','X','C','V','B','N','M',',','.','/'],
+    ['Space']
+  ];
+
+  function createVirtualKeyboard() {
+    keyboardPanel.innerHTML = '';
+    keyboardLayout.forEach(row => {
+      const rowDiv = document.createElement('div');
+      rowDiv.className = 'key-row';
+      row.forEach(label => {
+        const btn = document.createElement('div');
+        btn.className = 'key';
+        let keyId = label;
+        let sendKey = label;
+        if (label === 'Space') {
+          btn.textContent = 'SPACE';
+          sendKey = ' ';
+          keyId = 'SPACE';
+        } else if (label === 'Enter') {
+          btn.textContent = 'ENTER';
+          keyId = 'ENTER';
+        } else {
+          btn.textContent = label;
+        }
+        const logicalId = keyId.toUpperCase();
+        virtualKeyMap[logicalId] = btn;
+        btn.addEventListener('mousedown', function(){
+          btn.classList.add('active');
+          sendVirtualKey(sendKey);
+        });
+        btn.addEventListener('mouseup', function(){
+          btn.classList.remove('active');
+        });
+        btn.addEventListener('mouseleave', function(){
+          btn.classList.remove('active');
+        });
+        rowDiv.appendChild(btn);
+      });
+      keyboardPanel.appendChild(rowDiv);
+    });
+  }
+
+  function sendVirtualKey(key) {
+    if (key === '`') {
+      toggleDebugOverlay();
+      return;
+    }
+    let code = 0;
+    if (key.length === 1) {
+      code = key.charCodeAt(0);
+    } else if (key === 'Enter') {
+      code = 13;
+    } else if (key === ' ') {
+      code = 32;
+    }
+    if (code) queueKey(code);
+  }
+
+  function highlightVirtualKeyFromPhysical(key) {
+    let id;
+    if (key === ' ') id = 'SPACE';
+    else if (key === 'Enter') id = 'ENTER';
+    else id = key.toUpperCase();
+    const el = virtualKeyMap[id];
+    if (!el) return;
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 100);
+  }
+
+  keyboardToggle.addEventListener('click', function(){
+    if (keyboardPanel.style.display === 'none') {
+      keyboardPanel.style.display = 'flex';
+      keyboardToggle.textContent = 'Keyboard ▼';
+    } else {
+      keyboardPanel.style.display = 'none';
+      keyboardToggle.textContent = 'Keyboard ▲';
+    }
+  });
+
+  // Physical keyboard
+  window.addEventListener('keydown', function(e){
+    if (e.key === '`') {
+      e.preventDefault();
+      toggleDebugOverlay();
+      return;
+    }
+    if (debugOverlay.style.display === 'block') {
+      if (document.activeElement && debugOverlay.contains(document.activeElement)) {
+        return;
+      }
+    }
+
+    let code = 0;
+    if (e.key.length === 1) {
+      code = e.key.charCodeAt(0);
+    } else if (e.key === 'Enter') {
+      code = 13;
+    } else if (e.key === ' ') {
+      code = 32;
+    } else if (e.key === 'Backspace') {
+      code = 8;
+    } else if (e.key === 'Tab') {
+      code = 9;
+    } else if (e.key === 'Escape') {
+      code = 27;
+    } else {
+      return;
+    }
+    queueKey(code);
+    highlightVirtualKeyFromPhysical(e.key);
+  });
+
+  // Run loop
+  function runFrame() {
+    if (!errorMode) {
+      const MAX_STEPS = 4000;
+      for (let i = 0; i < MAX_STEPS && !halted && !errorMode; i++) {
+        stepCPU();
+      }
+      flushVideo();
+      if (debugOverlay.style.display === 'block') {
+        updateDebugOverlay();
+      }
+    }
+    requestAnimationFrame(runFrame);
+  }
+
+  // Init
+  function initVM() {
+    createVirtualKeyboard();
+    keyboardPanel.style.display = 'flex';
+
+    clearScreen(0);
+    drawBootIndicator();
+    flushVideo();
+
+    try {
+      const loaderProg = assemble(loaderSource, 0x0000);
+      const bootProg   = assemble(bootSource,   0x0200);
+
+      const mainPre = preprocessAngleOperators(mainSource, 0x0400);
+      const mainProg = assemble(mainPre, 0x0400);
+
+      for (let i = 0; i < loaderProg.bytes.length; i++) {
+        mem[loaderProg.origin + i] = loaderProg.bytes[i];
+      }
+
+      diskPrograms = [];
+      diskPrograms[0] = bootProg;
+      diskPrograms[1] = mainProg;
+
+      PC = 0;
+      A = 0;
+      Z = 0;
+      halted = false;
+      stepCount = 0;
+      errorMode = false;
+
+    } catch (e) {
+      console.error(e);
+      triggerError('Assembler error: ' + e.message);
+    }
+
+    requestAnimationFrame(runFrame);
+  }
+
+  // File screen logic: load any file as text into mainSource, then start VM
+  sourceFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) {
+      fileStatus.textContent = 'No file selected.';
+      return;
+    }
+    try {
+      const text = await file.text();
+      mainSource = text;
+      fileStatus.textContent = 'Loaded "' + file.name + '" (' + text.length + ' characters).';
+    } catch (err) {
+      console.error('File read error:', err);
+      fileStatus.textContent = 'Failed to read file.';
+    }
+  });
+
+  startVmBtn.addEventListener('click', () => {
+    if (!mainSource || mainSource.trim() === '') {
+      fileStatus.textContent = 'File is empty or not loaded.';
+      return;
+    }
+    fileScreen.style.display = 'none';
+    vmContainer.style.display = 'flex';
+    initVM();
+  });
+
+  // Note: initVM() is now called only after the user selects a file and presses Start VM.
+})();
+</script>
+</body>
+</html>
