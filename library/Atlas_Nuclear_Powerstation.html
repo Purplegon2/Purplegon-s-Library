@@ -1,0 +1,1705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Nuclear Power Plant Control Room</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: "Consolas", "Courier New", monospace;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      background-color: #050607;
+      background-image:
+        linear-gradient(135deg, rgba(255,255,255,0.03) 25%, transparent 25%),
+        linear-gradient(225deg, rgba(255,255,255,0.03) 25%, transparent 25%),
+        linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%),
+        linear-gradient(315deg, rgba(255,255,255,0.03) 25%, #050607 25%);
+      background-position: 5px 0, 5px 0, 0 0, 0 0;
+      background-size: 10px 10px;
+      color: #e4e4e4;
+    }
+
+    body.day-mode {
+      background-color: #cdd2d7;
+      color: #111;
+    }
+
+    #control-room {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr) 260px;
+      grid-template-rows: minmax(0, 1fr) 190px;
+      gap: 8px;
+      padding: 8px;
+      height: 100vh;
+    }
+
+    /* Panels */
+
+    .panel {
+      position: relative;
+      border-radius: 6px;
+      border: 1px solid #333;
+      background-color: #141518;
+      background-image:
+        url("https://www.google.com/url?sa=i&url=https%3A%2F%2Fwww.freepik.com%2Fpremium-photo%2Fdark-rough-metal-texture-background_12185185.htm&psig=AOvVaw2BIDSWBSLOFzDJTaDjsDj3&ust=1765248862969000&source=images&cd=vfe&opi=89978449&ved=0CBMQjRxqFwoTCIDFuvr-rJEDFQAAAAAdAAAAABAL");
+      background-size: cover;
+      background-blend-mode: multiply;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.02),
+                  0 8px 20px rgba(0,0,0,0.7);
+      padding: 8px;
+      overflow: hidden;
+    }
+
+    body.day-mode .panel {
+      background-color: #dde1e6;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    }
+
+    /* Allow scrolling in the tall side panels so all buttons are reachable */
+    .left-panel,
+    .right-panel {
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding-bottom: 4px;
+    }
+
+    .panel-header span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-header img.icon {
+      width: 16px;
+      height: 16px;
+      filter: invert(80%);
+    }
+
+    body.day-mode .panel-header img.icon {
+      filter: none;
+    }
+
+    .main-panel {
+      grid-column: 2 / 3;
+      grid-row: 1 / 2;
+      display: grid;
+      grid-template-rows: 170px minmax(0, 1fr);
+      gap: 8px;
+    }
+
+    .left-panel {
+      grid-column: 1 / 2;
+      grid-row: 1 / 3;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) 220px;
+      gap: 8px;
+    }
+
+    .right-panel {
+      grid-column: 3 / 4;
+      grid-row: 1 / 3;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) 220px;
+      gap: 8px;
+    }
+
+    .bottom-panel {
+      grid-column: 2 / 3;
+      grid-row: 2 / 3;
+      display: grid;
+      grid-template-columns: 2fr 1.4fr;
+      gap: 8px;
+    }
+
+    /* Buttons */
+
+    .btn {
+      cursor: pointer;
+      border: 1px solid #444;
+      background: radial-gradient(circle at 30% 20%, #444, #111);
+      color: #eee;
+      font-size: 11px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      text-align: center;
+      user-select: none;
+      transition: transform 0.05s ease, box-shadow 0.05s ease,
+                  background 0.15s ease, border-color 0.15s ease;
+      box-shadow: 0 2px 0 #000;
+      position: relative;
+    }
+
+    .btn:hover {
+      background: radial-gradient(circle at 30% 20%, #666, #222);
+      border-color: #777;
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: 0 1px 0 #000;
+      background: radial-gradient(circle at 30% 20%, #888, #333);
+    }
+
+    .btn-toggle.on {
+      background: radial-gradient(circle at 30% 20%, #0c7, #063);
+      border-color: #0f8;
+    }
+
+    .btn-toggle.off {
+      background: radial-gradient(circle at 30% 20%, #522, #200);
+      border-color: #a55;
+    }
+
+    .btn-large-red {
+      background: radial-gradient(circle at 30% 20%, #b00, #400);
+      border-color: #f33;
+      color: #ffdcdc;
+      font-weight: bold;
+      font-size: 12px;
+      padding: 6px 10px;
+      box-shadow: 0 3px 0 #200;
+    }
+
+    .btn-large-red:hover {
+      background: radial-gradient(circle at 30% 20%, #e00, #500);
+    }
+
+    .btn-large-red:active {
+      transform: translateY(1px);
+      box-shadow: 0 1px 0 #200;
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+      gap: 4px;
+      margin-bottom: 4px;
+    }
+
+    .hint {
+      font-size: 10px;
+      opacity: 0.7;
+      margin-top: 2px;
+    }
+
+    /* Big displays */
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .big-display {
+      background: rgba(0,0,0,0.6);
+      border-radius: 4px;
+      padding: 6px;
+      border: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    body.day-mode .big-display {
+      background: rgba(255,255,255,0.7);
+      border-color: #888;
+    }
+
+    .display-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.9;
+    }
+
+    .display-value {
+      font-size: 26px;
+      font-weight: bold;
+      text-align: right;
+      margin-top: 4px;
+      font-family: "Digital-7", "Consolas", "Courier New", monospace;
+      color: #0f0;
+      text-shadow: 0 0 5px rgba(0,255,0,0.6);
+    }
+
+    .display-unit {
+      font-size: 11px;
+      text-align: right;
+      opacity: 0.8;
+    }
+
+    .display-value.warning {
+      color: #ff0;
+      text-shadow: 0 0 5px rgba(255,255,0,0.7);
+    }
+
+    .display-value.danger {
+      color: #f33;
+      text-shadow: 0 0 6px rgba(255,80,80,0.9);
+    }
+
+    /* Gauges */
+
+    .gauges-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .gauge {
+      position: relative;
+      height: 120px;
+      background: radial-gradient(circle at 50% 10%, #444, #111);
+      border-radius: 6px;
+      border: 1px solid #333;
+      overflow: hidden;
+    }
+
+    body.day-mode .gauge {
+      background: radial-gradient(circle at 50% 10%, #e0e0e0, #8d8d8d);
+      border-color: #666;
+    }
+
+    .gauge-face {
+      position: absolute;
+      inset: 10px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.2);
+      background-image:
+        url("https://upload.wikimedia.org/wikipedia/commons/8/8f/Analog_speedometer_black.svg");
+      background-size: cover;
+      background-position: center;
+      opacity: 0.2;
+      pointer-events: none;
+    }
+
+    .gauge-needle {
+      position: absolute;
+      width: 2px;
+      height: 40%;
+      background: #f33;
+      top: 50%;
+      left: 50%;
+      transform-origin: 50% 100%;
+      transform: translate(-50%, -100%) rotate(-120deg);
+      box-shadow: 0 0 4px rgba(255,80,80,0.8);
+    }
+
+    body.day-mode .gauge-needle {
+      background: #b00;
+    }
+
+    .gauge-center {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #111;
+      border: 2px solid #777;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .gauge-label {
+      position: absolute;
+      bottom: 4px;
+      left: 6px;
+      right: 6px;
+      font-size: 11px;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .gauge-value {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    /* LEDs */
+
+    .led-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .led-group {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+    }
+
+    .led {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #111;
+      border: 1px solid #333;
+      box-shadow: inset 0 0 2px rgba(0,0,0,0.9);
+    }
+
+    .led.on {
+      background: #1f0;
+      box-shadow: 0 0 4px rgba(128,255,0,0.9);
+      border-color: #9f9;
+    }
+
+    .led.off {
+      background: #222;
+      border-color: #333;
+    }
+
+    .led.error {
+      background: #f33;
+      box-shadow: 0 0 5px rgba(255,80,80,0.9);
+      border-color: #f88;
+    }
+
+    .led.warn {
+      background: #ff0;
+      box-shadow: 0 0 5px rgba(255,255,100,0.9);
+      border-color: #ff8;
+    }
+
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.85;
+      margin: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* Target power bar */
+
+    .target-bar-container {
+      margin-top: 4px;
+      background: #111;
+      border-radius: 4px;
+      border: 1px solid #333;
+      height: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    body.day-mode .target-bar-container {
+      background: #e0e0e0;
+      border-color: #666;
+    }
+
+    .target-bar {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: linear-gradient(to right, #800, #880, #080);
+      opacity: 0.25;
+    }
+
+    .target-window {
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      border-radius: 3px;
+      border: 1px dashed rgba(0,0,0,0.4);
+      background: rgba(0,255,0,0.1);
+    }
+
+    .target-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #fff;
+      box-shadow: 0 0 3px rgba(255,255,255,0.8);
+    }
+
+    .target-status {
+      font-size: 11px;
+      margin-top: 2px;
+    }
+
+    .target-status.low {
+      color: #fdd835;
+    }
+
+    .target-status.in {
+      color: #66ff66;
+    }
+
+    .target-status.high {
+      color: #ff5252;
+    }
+
+    /* Event log */
+
+    #event-log {
+      height: 100%;
+      background: rgba(0,0,0,0.7);
+      border-radius: 4px;
+      border: 1px solid #333;
+      padding: 4px;
+      font-size: 11px;
+      overflow-y: auto;
+      white-space: pre-line;
+    }
+
+    body.day-mode #event-log {
+      background: rgba(255,255,255,0.7);
+      border-color: #777;
+    }
+
+    #event-log .entry-time {
+      opacity: 0.7;
+      margin-right: 4px;
+    }
+
+    #event-log .entry-text {
+      opacity: 0.95;
+    }
+
+    /* Stability summary */
+
+    .stability-summary {
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+    }
+
+    .risk-bar {
+      height: 8px;
+      border-radius: 4px;
+      background: #111;
+      border: 1px solid #333;
+      overflow: hidden;
+    }
+
+    .risk-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(to right, #0f0, #ff0, #f00);
+    }
+
+    /* Safety panel, alarms */
+
+    .alarm-banner {
+      margin-top: 4px;
+      font-size: 11px;
+      padding: 3px 5px;
+      border-radius: 3px;
+      background: linear-gradient(45deg, #550, #a00);
+      color: #ffe;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .alarm-banner span {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .stripe {
+      background-image: repeating-linear-gradient(
+        -45deg,
+        #fdd835 0,
+        #fdd835 6px,
+        #000 6px,
+        #000 12px
+      );
+      height: 6px;
+      border-radius: 3px;
+      margin-top: 4px;
+      opacity: 0.4;
+    }
+
+    /* Overlay */
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(5,0,0,0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .overlay.visible {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .overlay-content {
+      width: min(480px, 90vw);
+      background: #111;
+      border-radius: 8px;
+      border: 2px solid #f44336;
+      padding: 16px;
+      box-shadow: 0 14px 32px rgba(0,0,0,0.9);
+      text-align: center;
+    }
+
+    body.day-mode .overlay-content {
+      background: #f7f1f1;
+    }
+
+    .overlay-title {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: #ff5252;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .overlay-text {
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    .overlay .stripe {
+      margin: 10px 0;
+      opacity: 0.8;
+    }
+
+    .overlay .btn {
+      min-width: 100px;
+      margin-top: 6px;
+    }
+
+    /* Small responsivity */
+
+    @media (max-width: 1100px) {
+      #control-room {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        height: auto;
+      }
+      .left-panel,
+      .right-panel,
+      .main-panel,
+      .bottom-panel {
+        grid-column: 1 / 2;
+        grid-row: auto;
+      }
+    }
+
+    @media (max-height: 650px) {
+      .gauges-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="control-room">
+    <!-- LEFT PANEL: Reactor controls -->
+    <div class="panel left-panel">
+      <div class="panel" style="margin-bottom:8px;">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="radiation" src="https://upload.wikimedia.org/wikipedia/commons/9/99/Radioactive.svg">
+            REACTOR CORE
+          </span>
+        </div>
+        <div class="section-title">Rod Control</div>
+        <div class="btn-row">
+          <button id="btnInsertRods" class="btn" title="Insert rods - reduces reactivity and power.">
+            Insert Rods
+          </button>
+          <button id="btnWithdrawRods" class="btn" title="Withdraw rods - increases reactivity and power.">
+            Withdraw Rods
+          </button>
+          <button id="btnFineMinus" class="btn" title="Fine negative adjust - small power decrease.">
+            Fine Adjust −
+          </button>
+          <button id="btnFinePlus" class="btn" title="Fine positive adjust - small power increase.">
+            Fine Adjust +
+          </button>
+        </div>
+        <div class="btn-row">
+          <button id="btnScram" class="btn btn-large-red" title="Emergency shutdown - instantly inserts rods, dropping power near zero.">
+            SCRAM (Emergency Shutdown)
+          </button>
+        </div>
+        <div class="hint">
+          Rod insertion lowers reactor power, reducing temperature and pressure but risking low-power shutdown.
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="pipes" src="https://upload.wikimedia.org/wikipedia/commons/d/d1/Pipe_icon_03.svg">
+            COOLING SYSTEM
+          </span>
+        </div>
+        <div class="section-title">Pumps</div>
+        <div class="btn-row">
+          <button id="btnPump1" class="btn btn-toggle on" title="Toggle coolant pump 1. More pumps increase coolant flow and cooling.">
+            Coolant Pump 1: ON
+          </button>
+          <button id="btnPump2" class="btn btn-toggle on" title="Toggle coolant pump 2.">
+            Coolant Pump 2: ON
+          </button>
+        </div>
+
+        <div class="section-title">Flow & Valves</div>
+        <div class="btn-row">
+          <button id="btnIncFlow" class="btn" title="Increase coolant flow setpoint, improving cooling but slightly reducing efficiency.">
+            Increase Coolant Flow
+          </button>
+          <button id="btnDecFlow" class="btn" title="Decrease coolant flow setpoint, improving efficiency but raising temperatures.">
+            Decrease Coolant Flow
+          </button>
+        </div>
+        <div class="btn-row">
+          <button id="btnOpenPrimary" class="btn" title="Open primary loop valve to circulate coolant through core.">
+            Open Primary Valve
+          </button>
+          <button id="btnClosePrimary" class="btn" title="Close primary loop valve - dangerous at high power.">
+            Close Primary Valve
+          </button>
+        </div>
+        <div class="btn-row">
+          <button id="btnOpenSecondary" class="btn" title="Open secondary loop valve to send steam to turbines.">
+            Open Secondary Valve
+          </button>
+          <button id="btnCloseSecondary" class="btn" title="Close secondary loop valve - isolates turbines from steam.">
+            Close Secondary Valve
+          </button>
+        </div>
+        <div class="hint">
+          Pumps and valves control how quickly heat leaves the core. Losing flow at high power quickly leads to overheating.
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN PANEL -->
+    <div class="main-panel">
+      <!-- Top: big status -->
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="console" src="https://upload.wikimedia.org/wikipedia/commons/5/5c/Control_panel_icon.svg">
+            REACTOR STATUS
+          </span>
+          <span id="time-display">t = 0 s</span>
+        </div>
+        <div class="status-grid">
+          <div class="big-display">
+            <div class="display-label">Reactor Power</div>
+            <div id="displayPower" class="display-value">0%</div>
+            <div class="display-unit">Target: <span id="displayTargetRange">80–100%</span></div>
+            <div class="target-bar-container">
+              <div class="target-bar"></div>
+              <div id="target-window" class="target-window"></div>
+              <div id="target-marker" class="target-marker"></div>
+            </div>
+            <div id="targetStatus" class="target-status">Power status: N/A</div>
+          </div>
+
+          <div class="big-display">
+            <div class="display-label">Core Temperature</div>
+            <div id="displayCoreTemp" class="display-value">0 °C</div>
+            <div class="display-unit">Safe &lt; 800 °C (critical &gt; 900 °C)</div>
+          </div>
+
+          <div class="big-display">
+            <div class="display-label">Primary Pressure</div>
+            <div id="displayPressure" class="display-value">0 bar</div>
+            <div class="display-unit">Safe &lt; 230 bar (critical &gt; 260 bar)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom: gauges and indicators -->
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="gauge" src="https://upload.wikimedia.org/wikipedia/commons/3/31/Speedometer_font_awesome.svg">
+            FLOW & OUTPUT
+          </span>
+          <span>Rod Pos: <span id="rodPositionDisplay">50%</span></span>
+        </div>
+        <div class="gauges-row">
+          <div class="gauge">
+            <div class="gauge-face"></div>
+            <div id="needleFlow" class="gauge-needle"></div>
+            <div class="gauge-center"></div>
+            <div class="gauge-label">Coolant Flow</div>
+            <div id="gaugeFlowValue" class="gauge-value">0%</div>
+          </div>
+
+          <div class="gauge">
+            <div class="gauge-face"></div>
+            <div id="needleTurbine" class="gauge-needle"></div>
+            <div class="gauge-center"></div>
+            <div class="gauge-label">Turbine Output</div>
+            <div id="gaugeTurbineValue" class="gauge-value">0%</div>
+          </div>
+        </div>
+
+        <div class="section-title" style="margin-top:10px;">Status Indicators</div>
+        <div class="led-row">
+          <div class="led-group">
+            <div id="ledPump1" class="led on"></div>
+            <span>Pump 1</span>
+          </div>
+          <div class="led-group">
+            <div id="ledPump2" class="led on"></div>
+            <span>Pump 2</span>
+          </div>
+          <div class="led-group">
+            <div id="ledTurbine1" class="led off"></div>
+            <span>Turbine 1</span>
+          </div>
+          <div class="led-group">
+            <div id="ledTurbine2" class="led off"></div>
+            <span>Turbine 2</span>
+          </div>
+          <div class="led-group">
+            <div id="ledBackupGen" class="led off"></div>
+            <span>Backup Generator</span>
+          </div>
+          <div class="led-group">
+            <div id="ledStable" class="led off"></div>
+            <span>Reactor Stable</span>
+          </div>
+          <div class="led-group">
+            <div id="ledOverheat" class="led off"></div>
+            <span>Overheating</span>
+          </div>
+          <div class="led-group">
+            <div id="ledLowPower" class="led off"></div>
+            <span>Low Power</span>
+          </div>
+          <div class="led-group">
+            <div id="ledHighPressure" class="led off"></div>
+            <span>High Pressure</span>
+          </div>
+          <div class="led-group">
+            <div id="ledAlarm" class="led off"></div>
+            <span>Alarm</span>
+          </div>
+        </div>
+        <div class="stability-summary">
+          <span>Time in target: <span id="inSpecDisplay">0.0%</span></span>
+          <span>Risk: <span id="riskDisplay">0%</span></span>
+        </div>
+        <div class="risk-bar">
+          <div id="riskBarFill" class="risk-bar-fill"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: Turbines, safety, log -->
+    <div class="panel right-panel">
+      <div class="panel" style="margin-bottom:8px;">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="turbine" src="https://upload.wikimedia.org/wikipedia/commons/7/7b/Fan_font_awesome.svg">
+            TURBINES & OUTPUT
+          </span>
+        </div>
+
+        <div class="section-title">Turbine Connection</div>
+        <div class="btn-row">
+          <button id="btnTurbine1" class="btn btn-toggle off" title="Connect or disconnect turbine 1 from the grid.">
+            Turbine 1: DISCONNECT
+          </button>
+          <button id="btnTurbine2" class="btn btn-toggle off" title="Connect or disconnect turbine 2 from the grid.">
+            Turbine 2: DISCONNECT
+          </button>
+        </div>
+
+        <div class="section-title">Turbine Load</div>
+        <div class="btn-row">
+          <button id="btnIncTurbineLoad" class="btn" title="Increase turbine load - draws more power from the reactor and raises output.">
+            Increase Turbine Load
+          </button>
+          <button id="btnDecTurbineLoad" class="btn" title="Decrease turbine load - reduces electrical demand.">
+            Decrease Turbine Load
+          </button>
+        </div>
+
+        <div class="section-title">Backup Generator</div>
+        <div class="btn-row">
+          <button id="btnStartBackupGen" class="btn" title="Start backup generator - small but stable extra output, adds minor heat.">
+            Start Backup Generator
+          </button>
+          <button id="btnStopBackupGen" class="btn" title="Stop backup generator.">
+            Stop Backup Generator
+          </button>
+        </div>
+        <div class="hint">
+          If reactor power is unstable, carefully balance turbine load and backup generator to avoid dropping below minimum output.
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="warning" src="https://upload.wikimedia.org/wikipedia/commons/5/5f/Warning_icon.svg">
+            SAFETY & AUXILIARY
+          </span>
+        </div>
+        <div class="stripe"></div>
+        <div class="alarm-banner">
+          <span>
+            <strong>Alarms:</strong>
+            <span id="alarmText">None</span>
+          </span>
+          <button id="btnAckAlarm" class="btn" style="font-size:10px;" title="Silence audible alarm but does not fix the underlying condition.">
+            Acknowledge Alarm
+          </button>
+        </div>
+
+        <div class="section-title">Automation</div>
+        <div class="btn-row">
+          <button id="btnEnableAuto" class="btn" title="Enable auto-regulation; system will gently adjust rods and coolant to keep power near target.">
+            Enable Auto-Regulation
+          </button>
+          <button id="btnDisableAuto" class="btn" title="Disable auto-regulation; manual control only.">
+            Disable Auto-Regulation
+          </button>
+        </div>
+
+        <div class="section-title">Emergency Actions</div>
+        <div class="btn-row">
+          <button id="btnOpenVent" class="btn" title="Open steam vent - quickly reduces pressure and core temperature, but wastes energy.">
+            Open Vent Steam
+          </button>
+          <button id="btnCloseVent" class="btn" title="Close Vent Steam.">
+            Close Vent Steam
+          </button>
+        </div>
+        <div class="btn-row">
+          <button id="btnEnableSpray" class="btn" title="Enable containment spray - strong emergency cooling, rapidly dropping core temperature.">
+            Enable Containment Spray
+          </button>
+          <button id="btnDisableSpray" class="btn" title="Disable Containment Spray.">
+            Disable Containment Spray
+          </button>
+        </div>
+
+        <div class="section-title">Display Modes</div>
+        <div class="btn-row">
+          <button id="btnToggleDayNight" class="btn" title="Toggle between night mode and day mode visuals for the panel.">
+            Night Mode / Day Mode
+          </button>
+        </div>
+        <div class="hint">
+          Use emergency tools sparingly: aggressive cooling and venting can save the core, but may cause power dips and shutdown conditions.
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM PANEL: Event log + overview -->
+    <div class="bottom-panel">
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="log" src="https://upload.wikimedia.org/wikipedia/commons/0/09/Notebook_font_awesome.svg">
+            EVENT LOG
+          </span>
+        </div>
+        <div id="event-log"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <img class="icon" alt="overview" src="https://upload.wikimedia.org/wikipedia/commons/9/97/Dashboard_font_awesome.svg">
+            PLANT OVERVIEW
+          </span>
+        </div>
+        <div style="font-size:11px; line-height:1.4;">
+          Goal: keep reactor power in the target range while avoiding both meltdown and low-power shutdown.
+          <ul style="padding-left:18px; margin:4px 0;">
+            <li>Power too high for too long → overheating, pressure rise, meltdown.</li>
+            <li>Power too low for too long → automatic shutdown / plant offline.</li>
+            <li>Use pumps, valves, and emergency systems to control temperature and pressure.</li>
+            <li>Auto-Regulation can help, but manual corrections are still needed in emergencies.</li>
+          </ul>
+          <div style="margin-top:6px;">
+            Current mode: <span id="overviewMode">Manual</span><br>
+            Coolant temperature: <span id="overviewCoolant">0 °C</span><br>
+            Turbine load: <span id="overviewTurbineLoad">0%</span><br>
+            Grid output (incl. backup): <span id="overviewGridOutput">0%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overlay -->
+  <div id="overlay" class="overlay">
+    <div class="overlay-content">
+      <div class="overlay-title" id="overlayTitle">Reactor Meltdown!</div>
+      <div class="overlay-text" id="overlayText">
+        Core temperature exceeded safe limits.
+      </div>
+      <div class="stripe"></div>
+      <div style="font-size:11px; margin-bottom:8px;">
+        Click OK to reset the plant to initial safe startup conditions and try again.
+      </div>
+      <button id="btnOverlayOk" class="btn btn-large-red">OK</button>
+    </div>
+  </div>
+
+  <!-- Audio -->
+  <audio id="clickSound" preload="auto">
+    <source src="https://upload.wikimedia.org/wikipedia/commons/4/4e/Button_click.ogg" type="audio/ogg">
+  </audio>
+  <audio id="alarmSound" preload="auto" loop>
+    <source src="https://upload.wikimedia.org/wikipedia/commons/3/3c/Beep-09.ogg" type="audio/ogg">
+  </audio>
+
+  <script>
+    const state = {
+      time: 0,
+      dt: 0.5, // seconds per tick
+      reactorPower: 70, // %
+      coreTemp: 420, // °C
+      coolantTemp: 320,
+      pressure: 140, // bar-ish
+      rodPosition: 50, // 0 = fully withdrawn (max power), 100 = fully inserted
+      manualFlowOffset: 20, // base offset user adjusts
+      coolantFlow: 40, // %
+      pump1On: true,
+      pump2On: true,
+      primaryValveOpen: true,
+      secondaryValveOpen: true,
+      ventOpen: false,
+      containmentSprayOn: false,
+      turbine1Connected: false,
+      turbine2Connected: false,
+      turbineLoad: 50, // %
+      backupGenOn: false,
+      autoRegulation: false,
+      alarmActive: false,
+      alarmMessage: "None",
+      alarmSilenced: false,
+      risk: 0, // 0-100
+      targetMin: 80,
+      targetMax: 100,
+      highRiskTime: 0,
+      lowPowerTime: 0,
+      inSpecTime: 0,
+      totalSimTime: 0,
+      meltdown: false,
+      shutdown: false,
+      scrammed: false,
+      simulationRunning: true,
+      // initialized so UI can update before first physics step
+      turbineOutput: 0,
+      gridOutput: 0
+    };
+
+    // DOM references
+    const displayPower = document.getElementById("displayPower");
+    const displayCoreTemp = document.getElementById("displayCoreTemp");
+    const displayPressure = document.getElementById("displayPressure");
+    const timeDisplay = document.getElementById("time-display");
+    const rodPositionDisplay = document.getElementById("rodPositionDisplay");
+    const gaugeFlowValue = document.getElementById("gaugeFlowValue");
+    const gaugeTurbineValue = document.getElementById("gaugeTurbineValue");
+    const needleFlow = document.getElementById("needleFlow");
+    const needleTurbine = document.getElementById("needleTurbine");
+    const ledPump1 = document.getElementById("ledPump1");
+    const ledPump2 = document.getElementById("ledPump2");
+    const ledTurbine1 = document.getElementById("ledTurbine1");
+    const ledTurbine2 = document.getElementById("ledTurbine2");
+    const ledBackupGen = document.getElementById("ledBackupGen");
+    const ledStable = document.getElementById("ledStable");
+    const ledOverheat = document.getElementById("ledOverheat");
+    const ledLowPower = document.getElementById("ledLowPower");
+    const ledHighPressure = document.getElementById("ledHighPressure");
+    const ledAlarm = document.getElementById("ledAlarm");
+    const inSpecDisplay = document.getElementById("inSpecDisplay");
+    const riskDisplay = document.getElementById("riskDisplay");
+    const riskBarFill = document.getElementById("riskBarFill");
+    const targetWindow = document.getElementById("target-window");
+    const targetMarker = document.getElementById("target-marker");
+    const targetStatus = document.getElementById("targetStatus");
+    const alarmText = document.getElementById("alarmText");
+    const overviewMode = document.getElementById("overviewMode");
+    const overviewCoolant = document.getElementById("overviewCoolant");
+    const overviewTurbineLoad = document.getElementById("overviewTurbineLoad");
+    const overviewGridOutput = document.getElementById("overviewGridOutput");
+    const eventLog = document.getElementById("event-log");
+    const overlay = document.getElementById("overlay");
+    const overlayTitle = document.getElementById("overlayTitle");
+    const overlayText = document.getElementById("overlayText");
+    const btnOverlayOk = document.getElementById("btnOverlayOk");
+
+    const clickSound = document.getElementById("clickSound");
+    const alarmSound = document.getElementById("alarmSound");
+
+    function playClick() {
+      if (!clickSound) return;
+      try {
+        clickSound.currentTime = 0;
+        clickSound.play().catch(() => {});
+      } catch (e) {}
+    }
+
+    function updateAlarmSound() {
+      const shouldPlay = state.alarmActive && !state.alarmSilenced && !state.meltdown && !state.shutdown;
+      if (!alarmSound) return;
+      if (shouldPlay) {
+        try {
+          alarmSound.play().catch(() => {});
+        } catch (e) {}
+      } else {
+        try {
+          alarmSound.pause();
+          alarmSound.currentTime = 0;
+        } catch (e) {}
+      }
+    }
+
+    function logEvent(text) {
+      const time = state.time.toFixed(1).padStart(5, " ");
+      const line = document.createElement("div");
+      const spanTime = document.createElement("span");
+      spanTime.className = "entry-time";
+      spanTime.textContent = "[" + time + "s]";
+      const spanText = document.createElement("span");
+      spanText.className = "entry-text";
+      spanText.textContent = " " + text;
+      line.appendChild(spanTime);
+      line.appendChild(spanText);
+      eventLog.appendChild(line);
+      while (eventLog.childNodes.length > 80) {
+        eventLog.removeChild(eventLog.firstChild);
+      }
+      eventLog.scrollTop = eventLog.scrollHeight;
+    }
+
+    function setAlarm(message) {
+      state.alarmActive = true;
+      state.alarmMessage = message;
+      alarmText.textContent = message;
+      ledAlarm.classList.add("error");
+      ledAlarm.classList.remove("off");
+      state.alarmSilenced = false;
+      updateAlarmSound();
+    }
+
+    function clearAlarm() {
+      state.alarmActive = false;
+      state.alarmMessage = "None";
+      alarmText.textContent = "None";
+      ledAlarm.classList.remove("error", "warn");
+      ledAlarm.classList.add("off");
+      updateAlarmSound();
+    }
+
+    function updateUI() {
+      timeDisplay.textContent = "t = " + state.time.toFixed(1) + " s";
+
+      let powerClass = "display-value";
+      if (state.reactorPower < state.targetMin - 10) powerClass += " warning";
+      if (state.reactorPower > state.targetMax + 10) powerClass += " danger";
+
+      displayPower.className = powerClass;
+      displayPower.textContent = state.reactorPower.toFixed(1) + " %";
+
+      let tempClass = "display-value";
+      if (state.coreTemp > 780 && state.coreTemp <= 900) tempClass += " warning";
+      if (state.coreTemp > 900) tempClass += " danger";
+      displayCoreTemp.className = tempClass;
+      displayCoreTemp.textContent = state.coreTemp.toFixed(0) + " °C";
+
+      let presClass = "display-value";
+      if (state.pressure > 220 && state.pressure <= 260) presClass += " warning";
+      if (state.pressure > 260) presClass += " danger";
+      displayPressure.className = presClass;
+      displayPressure.textContent = state.pressure.toFixed(0) + " bar";
+
+      rodPositionDisplay.textContent = state.rodPosition.toFixed(0) + "%";
+
+      gaugeFlowValue.textContent = state.coolantFlow.toFixed(1) + "%";
+      gaugeTurbineValue.textContent = state.turbineOutput.toFixed(1) + "%";
+
+      function valueToAngle(value, min, max) {
+        const ratio = (value - min) / (max - min);
+        const angle = -120 + (ratio * 240);
+        return Math.max(-120, Math.min(120, angle));
+      }
+
+      const flowAngle = valueToAngle(state.coolantFlow, 0, 100);
+      needleFlow.style.transform = "translate(-50%, -100%) rotate(" + flowAngle + "deg)";
+
+      const turbAngle = valueToAngle(state.turbineOutput, 0, 150);
+      needleTurbine.style.transform = "translate(-50%, -100%) rotate(" + turbAngle + "deg)";
+
+      function setLed(led, on, type) {
+        led.classList.remove("on", "off", "error", "warn");
+        if (!on) {
+          led.classList.add("off");
+        } else if (type === "error") {
+          led.classList.add("error");
+        } else if (type === "warn") {
+          led.classList.add("warn");
+        } else {
+          led.classList.add("on");
+        }
+      }
+
+      setLed(ledPump1, state.pump1On);
+      setLed(ledPump2, state.pump2On);
+      setLed(ledTurbine1, state.turbine1Connected);
+      setLed(ledTurbine2, state.turbine2Connected);
+      setLed(ledBackupGen, state.backupGenOn);
+
+      const stable = state.coreTemp < 780 && state.pressure < 220 &&
+                     state.reactorPower >= state.targetMin &&
+                     state.reactorPower <= state.targetMax &&
+                     state.risk < 40;
+      setLed(ledStable, stable);
+
+      setLed(ledOverheat, state.coreTemp > 780, state.coreTemp > 900 ? "error" : "warn");
+      setLed(ledHighPressure, state.pressure > 220, state.pressure > 260 ? "error" : "warn");
+      setLed(ledLowPower, state.reactorPower < 60, state.reactorPower < 40 ? "error" : "warn");
+
+      riskDisplay.textContent = state.risk.toFixed(0) + "%";
+      riskBarFill.style.width = state.risk.toFixed(0) + "%";
+
+      const min = 0, max = 130;
+      const minTarget = state.targetMin;
+      const maxTarget = state.targetMax;
+      const range = max - min;
+      const left = ((minTarget - min) / range) * 100;
+      const right = ((maxTarget - min) / range) * 100;
+      targetWindow.style.left = left + "%";
+      targetWindow.style.right = (100 - right) + "%";
+
+      const markerPos = ((state.reactorPower - min) / range) * 100;
+      targetMarker.style.left = markerPos + "%";
+
+      let tStatus = "Power status: ";
+      if (state.reactorPower < state.targetMin - 1) {
+        tStatus += "Too low (under target).";
+        targetStatus.className = "target-status low";
+      } else if (state.reactorPower > state.targetMax + 1) {
+        tStatus += "Too high (over target).";
+        targetStatus.className = "target-status high";
+      } else {
+        tStatus += "Within target.";
+        targetStatus.className = "target-status in";
+      }
+      targetStatus.textContent = tStatus;
+
+      const fraction = state.totalSimTime > 0 ? (state.inSpecTime / state.totalSimTime) * 100 : 0;
+      inSpecDisplay.textContent = fraction.toFixed(1) + "%";
+
+      overviewMode.textContent = state.autoRegulation ? "Auto-Regulation" : "Manual";
+      overviewCoolant.textContent = state.coolantTemp.toFixed(0) + " °C";
+      overviewTurbineLoad.textContent = state.turbineLoad.toFixed(0) + "%";
+      overviewGridOutput.textContent = state.gridOutput.toFixed(1) + "%";
+    }
+
+    function clamp(val, min, max) {
+      return Math.max(min, Math.min(max, val));
+    }
+
+    function physicsStep() {
+      if (!state.simulationRunning) return;
+
+      const dt = state.dt;
+      state.time += dt;
+      state.totalSimTime += dt;
+
+      let desiredFlow = state.manualFlowOffset;
+      if (state.pump1On) desiredFlow += 35;
+      if (state.pump2On) desiredFlow += 35;
+      if (!state.primaryValveOpen) desiredFlow *= 0.3;
+      if (!state.secondaryValveOpen) desiredFlow *= 0.8;
+      if (!state.pump1On && !state.pump2On) desiredFlow *= 0.2;
+
+      desiredFlow = clamp(desiredFlow, 0, 100);
+      state.coolantFlow += (desiredFlow - state.coolantFlow) * 0.08;
+
+      const reactivity = clamp((100 - state.rodPosition) / 100, 0, 1.1);
+
+      let targetPower = 120 * reactivity;
+
+      const tempFeedback = (state.coreTemp - 500) * 0.02;
+      targetPower -= tempFeedback;
+
+      if (state.ventOpen) {
+        targetPower -= 5;
+      }
+
+      if (state.autoRegulation) {
+        const powerError = ((state.targetMin + state.targetMax) / 2) - state.reactorPower;
+        if (Math.abs(powerError) > 3) {
+          state.rodPosition -= powerError * 0.2 * dt;
+        }
+        const tempError = 760 - state.coreTemp;
+        state.manualFlowOffset -= tempError * 0.001 * dt;
+      }
+
+      state.rodPosition = clamp(state.rodPosition, 0, 100);
+      state.manualFlowOffset = clamp(state.manualFlowOffset, 0, 80);
+
+      const powerDelta = (targetPower - state.reactorPower) * 0.15;
+      state.reactorPower += powerDelta * dt;
+      state.reactorPower = clamp(state.reactorPower, 0, 130);
+
+      const heating = state.reactorPower * 0.55;
+      let cooling = state.coolantFlow * 0.9;
+
+      if (!state.primaryValveOpen) {
+        cooling *= 0.1;
+      }
+
+      if (state.containmentSprayOn) {
+        cooling += 120;
+      }
+
+      if (state.ventOpen) {
+        cooling += 40;
+      }
+
+      if (state.backupGenOn) {
+        state.coreTemp += 4 * dt;
+      }
+
+      const netHeat = heating - cooling;
+      state.coreTemp += netHeat * dt;
+      state.coreTemp = clamp(state.coreTemp, 100, 1200);
+
+      const targetCoolant = state.coreTemp - clamp(state.coolantFlow * 1.2, 20, 120);
+      state.coolantTemp += (targetCoolant - state.coolantTemp) * 0.15 * dt;
+      state.coolantTemp = clamp(state.coolantTemp, 50, 1000);
+
+      let targetPressure = 110 + (state.coreTemp - 300) * 0.12 + state.coolantFlow * 0.3;
+      if (state.primaryValveOpen) targetPressure -= 10;
+      if (state.secondaryValveOpen) targetPressure -= 10;
+      if (state.ventOpen) targetPressure -= 35;
+      targetPressure = clamp(targetPressure, 50, 320);
+      state.pressure += (targetPressure - state.pressure) * 0.25 * dt;
+
+      const connectedCount = (state.turbine1Connected ? 1 : 0) + (state.turbine2Connected ? 1 : 0);
+      const steamAvailable = state.secondaryValveOpen ? state.reactorPower : state.reactorPower * 0.4;
+      const baseTurbine = steamAvailable * (state.turbineLoad / 100) * connectedCount;
+      state.turbineOutput = clamp(baseTurbine, 0, 150);
+
+      let gridOutput = state.turbineOutput;
+      if (state.backupGenOn) {
+        gridOutput += 20;
+      }
+      state.gridOutput = clamp(gridOutput, 0, 170);
+
+      let riskDelta = 0;
+      if (state.coreTemp > 780) riskDelta += (state.coreTemp - 780) * 0.01;
+      if (state.pressure > 230) riskDelta += (state.pressure - 230) * 0.02;
+      if (state.coolantFlow < 25 && state.reactorPower > 80) riskDelta += (80 - state.coolantFlow) * 0.03;
+      if (!state.primaryValveOpen && state.reactorPower > 60) riskDelta += 0.8;
+
+      const relax = 1.2;
+      state.risk += (riskDelta - relax) * dt;
+      state.risk = clamp(state.risk, 0, 100);
+
+      if (state.reactorPower >= state.targetMin && state.reactorPower <= state.targetMax) {
+        state.inSpecTime += dt;
+      }
+
+      if (state.reactorPower < 40) {
+        state.lowPowerTime += dt;
+      } else {
+        state.lowPowerTime = Math.max(0, state.lowPowerTime - dt * 0.5);
+      }
+
+      if (state.coreTemp > 840 || state.pressure > 240 || state.risk > 80) {
+        state.highRiskTime += dt;
+      } else {
+        state.highRiskTime = Math.max(0, state.highRiskTime - dt * 0.6);
+      }
+
+      if (state.coreTemp > 840 || state.pressure > 240 || state.risk > 80) {
+        setAlarm("Critical conditions! Check temperature, pressure, and cooling.");
+        ledAlarm.classList.add("error");
+      } else if (state.reactorPower < 50 || state.reactorPower > 110) {
+        if (!state.alarmActive) {
+          setAlarm("Power outside comfortable operating range.");
+          ledAlarm.classList.add("warn");
+        }
+      } else if (state.alarmActive && !state.meltdown && !state.shutdown) {
+        clearAlarm();
+      }
+
+      if ((state.coreTemp > 900 || state.pressure > 260 || state.risk > 95) && state.highRiskTime > 10) {
+        triggerMeltdown();
+      }
+
+      if ((state.lowPowerTime > 30 && state.reactorPower < 30) ||
+          (state.scrammed && state.reactorPower < 5 && state.lowPowerTime > 10)) {
+        triggerShutdown();
+      }
+
+      updateUI();
+    }
+
+    function triggerMeltdown() {
+      if (state.meltdown) return;
+      state.meltdown = true;
+      state.simulationRunning = false;
+      setAlarm("Reactor meltdown! Core integrity lost.");
+      logEvent(">>> REACTOR MELTDOWN <<<");
+      overlayTitle.textContent = "Reactor Meltdown!";
+      overlayText.textContent = "Core temperature and/or pressure exceeded critical limits for too long. The reactor vessel has failed.";
+      overlay.classList.add("visible");
+      updateAlarmSound();
+    }
+
+    function triggerShutdown() {
+      if (state.shutdown) return;
+      state.shutdown = true;
+      state.simulationRunning = false;
+      setAlarm("Plant offline: automatic shutdown.");
+      logEvent(">>> REACTOR SHUTDOWN <<<");
+      overlayTitle.textContent = "Plant Offline";
+      overlayText.textContent = "Reactor power remained too low for an extended period. Safety systems have brought the plant to a cold shutdown.";
+      overlay.classList.add("visible");
+      updateAlarmSound();
+    }
+
+    function resetSimulation() {
+      state.time = 0;
+      state.dt = 0.5;
+      state.reactorPower = 70;
+      state.coreTemp = 420;
+      state.coolantTemp = 320;
+      state.pressure = 140;
+      state.rodPosition = 50;
+      state.manualFlowOffset = 20;
+      state.coolantFlow = 40;
+      state.pump1On = true;
+      state.pump2On = true;
+      state.primaryValveOpen = true;
+      state.secondaryValveOpen = true;
+      state.ventOpen = false;
+      state.containmentSprayOn = false;
+      state.turbine1Connected = false;
+      state.turbine2Connected = false;
+      state.turbineLoad = 50;
+      state.backupGenOn = false;
+      state.autoRegulation = false;
+      state.alarmActive = false;
+      state.alarmMessage = "None";
+      state.alarmSilenced = false;
+      state.risk = 10;
+      state.highRiskTime = 0;
+      state.lowPowerTime = 0;
+      state.inSpecTime = 0;
+      state.totalSimTime = 0;
+      state.meltdown = false;
+      state.shutdown = false;
+      state.scrammed = false;
+      state.simulationRunning = true;
+      state.turbineOutput = 0;
+      state.gridOutput = 0;
+      alarmText.textContent = "None";
+      clearAlarm();
+      ledAlarm.classList.add("off");
+
+      eventLog.innerHTML = "";
+      logEvent("Plant reset to initial safe startup conditions.");
+
+      overlay.classList.remove("visible");
+
+      updateButtonStates();
+      updateUI();
+    }
+
+    function updateButtonStates() {
+      const btnPump1 = document.getElementById("btnPump1");
+      const btnPump2 = document.getElementById("btnPump2");
+      btnPump1.textContent = "Coolant Pump 1: " + (state.pump1On ? "ON" : "OFF");
+      btnPump1.classList.toggle("on", state.pump1On);
+      btnPump1.classList.toggle("off", !state.pump1On);
+      btnPump1.classList.add("btn-toggle");
+
+      btnPump2.textContent = "Coolant Pump 2: " + (state.pump2On ? "ON" : "OFF");
+      btnPump2.classList.toggle("on", state.pump2On);
+      btnPump2.classList.toggle("off", !state.pump2On);
+      btnPump2.classList.add("btn-toggle");
+
+      const btnTurbine1 = document.getElementById("btnTurbine1");
+      const btnTurbine2 = document.getElementById("btnTurbine2");
+
+      btnTurbine1.textContent = "Turbine 1: " + (state.turbine1Connected ? "CONNECTED" : "DISCONNECT");
+      btnTurbine1.classList.toggle("on", state.turbine1Connected);
+      btnTurbine1.classList.toggle("off", !state.turbine1Connected);
+      btnTurbine1.classList.add("btn-toggle");
+
+      btnTurbine2.textContent = "Turbine 2: " + (state.turbine2Connected ? "CONNECTED" : "DISCONNECT");
+      btnTurbine2.classList.toggle("on", state.turbine2Connected);
+      btnTurbine2.classList.toggle("off", !state.turbine2Connected);
+      btnTurbine2.classList.add("btn-toggle");
+    }
+
+    function initControls() {
+      document.getElementById("btnInsertRods").addEventListener("click", () => {
+        playClick();
+        state.rodPosition += 8;
+        state.rodPosition = clamp(state.rodPosition, 0, 100);
+        state.scrammed = false;
+        logEvent("Control rods inserted (coarse).");
+      });
+
+      document.getElementById("btnWithdrawRods").addEventListener("click", () => {
+        playClick();
+        state.rodPosition -= 8;
+        state.rodPosition = clamp(state.rodPosition, 0, 100);
+        state.scrammed = false;
+        logEvent("Control rods withdrawn (coarse).");
+      });
+
+      document.getElementById("btnFineMinus").addEventListener("click", () => {
+        playClick();
+        state.rodPosition += 2;
+        state.rodPosition = clamp(state.rodPosition, 0, 100);
+        state.scrammed = false;
+        logEvent("Control rods fine adjust (−).");
+      });
+
+      document.getElementById("btnFinePlus").addEventListener("click", () => {
+        playClick();
+        state.rodPosition -= 2;
+        state.rodPosition = clamp(state.rodPosition, 0, 100);
+        state.scrammed = false;
+        logEvent("Control rods fine adjust (+).");
+      });
+
+      document.getElementById("btnScram").addEventListener("click", () => {
+        playClick();
+        state.rodPosition = 100;
+        state.scrammed = true;
+        state.turbineLoad = 20;
+        state.manualFlowOffset = Math.max(state.manualFlowOffset, 40);
+        state.primaryValveOpen = true;
+        state.secondaryValveOpen = true;
+        state.ventOpen = true;
+        state.containmentSprayOn = true;
+        logEvent("SCRAM initiated: emergency shutdown sequence.");
+        setAlarm("SCRAM: emergency shutdown. Monitor power and cooldown.");
+      });
+
+      document.getElementById("btnPump1").addEventListener("click", () => {
+        playClick();
+        state.pump1On = !state.pump1On;
+        logEvent("Coolant Pump 1 turned " + (state.pump1On ? "ON" : "OFF") + ".");
+        updateButtonStates();
+      });
+
+      document.getElementById("btnPump2").addEventListener("click", () => {
+        playClick();
+        state.pump2On = !state.pump2On;
+        logEvent("Coolant Pump 2 turned " + (state.pump2On ? "ON" : "OFF") + ".");
+        updateButtonStates();
+      });
+
+      document.getElementById("btnIncFlow").addEventListener("click", () => {
+        playClick();
+        state.manualFlowOffset += 5;
+        state.manualFlowOffset = clamp(state.manualFlowOffset, 0, 80);
+        logEvent("Coolant flow setpoint increased.");
+      });
+
+      document.getElementById("btnDecFlow").addEventListener("click", () => {
+        playClick();
+        state.manualFlowOffset -= 5;
+        state.manualFlowOffset = clamp(state.manualFlowOffset, 0, 80);
+        logEvent("Coolant flow setpoint decreased.");
+      });
+
+      document.getElementById("btnOpenPrimary").addEventListener("click", () => {
+        playClick();
+        if (!state.primaryValveOpen) {
+          state.primaryValveOpen = true;
+          logEvent("Primary valve opened.");
+        }
+      });
+
+      document.getElementById("btnClosePrimary").addEventListener("click", () => {
+        playClick();
+        if (state.primaryValveOpen) {
+          state.primaryValveOpen = false;
+          logEvent("Primary valve closed (WARNING: reduced core cooling).");
+          setAlarm("Primary valve closed at non-zero power; monitor temperature.");
+        }
+      });
+
+      document.getElementById("btnOpenSecondary").addEventListener("click", () => {
+        playClick();
+        if (!state.secondaryValveOpen) {
+          state.secondaryValveOpen = true;
+          logEvent("Secondary valve opened.");
+        }
+      });
+
+      document.getElementById("btnCloseSecondary").addEventListener("click", () => {
+        playClick();
+        if (state.secondaryValveOpen) {
+          state.secondaryValveOpen = false;
+          logEvent("Secondary valve closed (turbine steam isolated).");
+          setAlarm("Secondary valve closed; turbine output may fall.");
+        }
+      });
+
+      document.getElementById("btnTurbine1").addEventListener("click", () => {
+        playClick();
+        state.turbine1Connected = !state.turbine1Connected;
+        logEvent("Turbine 1 " + (state.turbine1Connected ? "connected to" : "disconnected from") + " grid.");
+        updateButtonStates();
+      });
+
+      document.getElementById("btnTurbine2").addEventListener("click", () => {
+        playClick();
+        state.turbine2Connected = !state.turbine2Connected;
+        logEvent("Turbine 2 " + (state.turbine2Connected ? "connected to" : "disconnected from") + " grid.");
+        updateButtonStates();
+      });
+
+      document.getElementById("btnIncTurbineLoad").addEventListener("click", () => {
+        playClick();
+        state.turbineLoad += 8;
+        state.turbineLoad = clamp(state.turbineLoad, 0, 130);
+        logEvent("Turbine load increased.");
+      });
+
+      document.getElementById("btnDecTurbineLoad").addEventListener("click", () => {
+        playClick();
+        state.turbineLoad -= 8;
+        state.turbineLoad = clamp(state.turbineLoad, 0, 130);
+        logEvent("Turbine load decreased.");
+      });
+
+      document.getElementById("btnStartBackupGen").addEventListener("click", () => {
+        playClick();
+        if (!state.backupGenOn) {
+          state.backupGenOn = true;
+          logEvent("Backup generator started.");
+        }
+      });
+
+      document.getElementById("btnStopBackupGen").addEventListener("click", () => {
+        playClick();
+        if (state.backupGenOn) {
+          state.backupGenOn = false;
+          logEvent("Backup generator stopped.");
+        }
+      });
+
+      document.getElementById("btnAckAlarm").addEventListener("click", () => {
+        playClick();
+        state.alarmSilenced = true;
+        updateAlarmSound();
+        logEvent("Alarm acknowledged by operator.");
+      });
+
+      document.getElementById("btnEnableAuto").addEventListener("click", () => {
+        playClick();
+        if (!state.autoRegulation) {
+          state.autoRegulation = true;
+          logEvent("Auto-Regulation enabled.");
+          overviewMode.textContent = "Auto-Regulation";
+        }
+      });
+
+      document.getElementById("btnDisableAuto").addEventListener("click", () => {
+        playClick();
+        if (state.autoRegulation) {
+          state.autoRegulation = false;
+          logEvent("Auto-Regulation disabled.");
+          overviewMode.textContent = "Manual";
+        }
+      });
+
+      document.getElementById("btnOpenVent").addEventListener("click", () => {
+        playClick();
+        if (!state.ventOpen) {
+          state.ventOpen = true;
+          logEvent("Steam vent opened (rapid pressure relief).");
+          setAlarm("Vent open: watch power and pressure.");
+        }
+      });
+
+      document.getElementById("btnCloseVent").addEventListener("click", () => {
+        playClick();
+        if (state.ventOpen) {
+          state.ventOpen = false;
+          logEvent("Steam vent closed.");
+        }
+      });
+
+      document.getElementById("btnEnableSpray").addEventListener("click", () => {
+        playClick();
+        if (!state.containmentSprayOn) {
+          state.containmentSprayOn = true;
+          logEvent("Containment spray enabled (emergency cooling).");
+          setAlarm("Containment spray active; temperatures dropping quickly.");
+        }
+      });
+
+      document.getElementById("btnDisableSpray").addEventListener("click", () => {
+        playClick();
+        if (state.containmentSprayOn) {
+          state.containmentSprayOn = false;
+          logEvent("Containment spray disabled.");
+        }
+      });
+
+      document.getElementById("btnToggleDayNight").addEventListener("click", () => {
+        playClick();
+        document.body.classList.toggle("day-mode");
+        logEvent("Display mode toggled (day/night).");
+      });
+
+      btnOverlayOk.addEventListener("click", () => {
+        playClick();
+        resetSimulation();
+      });
+    }
+
+    initControls();
+    updateButtonStates();
+    logEvent("Plant startup: reactor warming to nominal power.");
+    updateUI();
+    setInterval(physicsStep, state.dt * 1000);
+  </script>
+</body>
+</html>
