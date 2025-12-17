@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Powder Simulation (Sand/Water/Gas + Heat/Fire + Melting)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: system-ui, Arial, sans-serif; background:#0f1115; color:#e7e7e7; }
+    header, footer { padding: 10px 12px; background:#141824; border-bottom: 1px solid #22283a; }
+    footer { border-top: 1px solid #22283a; border-bottom: none; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .pill { padding:6px 10px; background:#1a2032; border:1px solid #2a3350; border-radius:999px; }
+    button, select, input[type="range"] {
+      background:#1a2032; color:#e7e7e7; border:1px solid #2a3350; border-radius:8px;
+      padding:6px 10px;
+    }
+    button { cursor:pointer; }
+    button:active { transform: translateY(1px); }
+    label { display:flex; gap:8px; align-items:center; }
+    canvas { display:block; width:100vw; height:calc(100vh - 132px); image-rendering: pixelated; }
+    small { opacity:.85; }
+    kbd { background:#1a2032; border:1px solid #2a3350; border-bottom-width:2px; padding:1px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div class="pill"><strong>Powder Sim</strong> + Heat/Fire + Melting</div>
+
+    <label class="pill">Brush
+      <input id="brush" type="range" min="1" max="12" value="4" />
+      <span id="brushVal">4</span>
+    </label>
+
+    <label class="pill">Element
+      <select id="elem">
+        <option value="SAND">Sand</option>
+        <option value="WATER">Water</option>
+        <option value="GAS">Gas</option>
+        <option value="METAL">Metal</option>
+        <option value="MOLTEN">Molten metal</option>
+        <option value="WOOD">Wood</option>
+        <option value="FIRE">Fire</option>
+        <option value="WALL">Wall</option>
+        <option value="ERASE">Eraser</option>
+      </select>
+    </label>
+
+    <label class="pill">Speed
+      <input id="speed" type="range" min="1" max="8" value="4" />
+      <span id="speedVal">4</span>
+    </label>
+
+    <label class="pill">Heat brush
+      <input id="heat" type="range" min="-400" max="900" value="0" />
+      <span id="heatVal">0</span>
+    </label>
+
+    <button id="clear">Clear</button>
+    <button id="pause">Pause</button>
+
+    <small class="pill">
+      Keys: <kbd>1</kbd> Sand <kbd>2</kbd> Water <kbd>3</kbd> Gas <kbd>4</kbd> Metal <kbd>5</kbd> Wood <kbd>6</kbd> Fire
+      <kbd>E</kbd> Erase <kbd>Space</kbd> Pause
+    </small>
+  </div>
+</header>
+
+<canvas id="c"></canvas>
+
+<footer>
+  <small>
+    Heat model: per-cell temperature + diffusion + ambient cooling. Fire is a material, and flammables can enter a “burning” state.
+    Metal melts to molten metal above a threshold, and freezes back below a lower threshold (hysteresis).
+  </small>
+</footer>
+
+<script>
+(() => {
+  // ===== Grid configuration =====
+  const cellSize = 3;
+
+  // ===== Element IDs =====
+  const ID = {
+    EMPTY: 0,
+    WALL:  1,
+    SAND:  2,
+    WATER: 3,
+    GAS:   4,
+    METAL: 5,
+    MOLTEN_METAL: 6,
+    WOOD:  7,
+    FIRE:  8,
+    ASH:   9,
+    SMOKE: 10
+  };
+
+  // ===== Heat / fire tuning =====
+  const AMBIENT = 20;             // "room temp"
+  const COOL_TO_AMBIENT = 0.02;   // per step pull toward ambient
+  const DIFFUSE = 0.15;           // heat diffusion strength (0..1)
+  const FIRE_HEAT = 220;          // heat injected to neighbors by fire
+  const BURN_HEAT = 90;           // heat from burning state (non-fire cells)
+  const FIRE_LIFE_MIN = 18;
+  const FIRE_LIFE_MAX = 45;
+
+  // Metal phase change
+  const METAL_MELT_AT = 620;      // temp >= melts into molten
+  const METAL_FREEZE_AT = 560;    // temp <= freezes back (hysteresis)
+
+  // Wood ignition
+  const WOOD_IGNITE_AT = 320;
+  const WOOD_BURNOUT_TIME = 140;  // how long a wood cell burns before turning to ash (in sim ticks)
+
+  // ===== Element definitions =====
+  const ELEMENTS = {
+    [ID.EMPTY]: { name:"Empty", color:[0,0,0,0], update:null },
+
+    [ID.WALL]:  { name:"Wall",  color:[120,120,130,255], update:null, solid:true },
+
+    [ID.SAND]: {
+      name:"Sand", color:[212,190,120,255], solid:true,
+      update(grid,x,y,rng) {
+        const belowY = y+1;
+        if (tryMoveOrSwap(x,y,x,belowY, canFallThroughForSand)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMoveOrSwap(x,y,x+dir,y+1, canFallThroughForSand)) return;
+        tryMoveOrSwap(x,y,x-dir,y+1, canFallThroughForSand);
+      }
+    },
+
+    [ID.WATER]: {
+      name:"Water", color:[80,140,220,220], liquid:true,
+      update(grid,x,y,rng) {
+        if (tryMove(x,y,x,y+1, canWaterMoveInto)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMove(x,y,x+dir,y+1, canWaterMoveInto)) return;
+        if (tryMove(x,y,x-dir,y+1, canWaterMoveInto)) return;
+        if (tryMove(x,y,x+dir,y, canWaterMoveInto)) return;
+        tryMove(x,y,x-dir,y, canWaterMoveInto);
+      }
+    },
+
+    [ID.GAS]: {
+      name:"Gas", color:[220,220,220,120], gas:true,
+      update(grid,x,y,rng) {
+        if (tryMove(x,y,x,y-1, canGasMoveInto)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMove(x,y,x+dir,y-1, canGasMoveInto)) return;
+        if (tryMove(x,y,x-dir,y-1, canGasMoveInto)) return;
+        if (tryMove(x,y,x+dir,y, canGasMoveInto)) return;
+        if (tryMove(x,y,x-dir,y, canGasMoveInto)) return;
+        if (rng() < 0.02) tryMove(x,y,x,y+1, canGasMoveInto);
+      }
+    },
+
+    [ID.METAL]: {
+      name:"Metal", color:[170,175,185,255], solid:true,
+      update(grid,x,y,rng) {
+        // immobile, but phase change handled globally by temperature
+      }
+    },
+
+    [ID.MOLTEN_METAL]: {
+      name:"Molten metal", color:[255,140,70,230], liquid:true,
+      update(grid,x,y,rng) {
+        // like a thicker liquid (slower sideways flow)
+        if (tryMove(x,y,x,y+1, canMoltenMoveInto)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMove(x,y,x+dir,y+1, canMoltenMoveInto)) return;
+        if (tryMove(x,y,x-dir,y+1, canMoltenMoveInto)) return;
+        // reduced sideways chance
+        if (rng() < 0.35) {
+          if (tryMove(x,y,x+dir,y, canMoltenMoveInto)) return;
+          tryMove(x,y,x-dir,y, canMoltenMoveInto);
+        }
+      }
+    },
+
+    [ID.WOOD]: {
+      name:"Wood", color:[145,95,55,255], solid:true, flammable:true,
+      update(grid,x,y,rng) {
+        // mostly immobile, but can fall like a block if unsupported
+        if (tryMove(x,y,x,y+1, canBlockFallInto)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMove(x,y,x+dir,y+1, canBlockFallInto)) return;
+        tryMove(x,y,x-dir,y+1, canBlockFallInto);
+      }
+    },
+
+    [ID.FIRE]: {
+      name:"Fire", color:[255,200,90,200], gas:true,
+      update(grid,x,y,rng) {
+        // Fire drifts upward; short-lived (life handled globally).
+        if (tryMove(x,y,x,y-1, canFireMoveInto)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMove(x,y,x+dir,y-1, canFireMoveInto)) return;
+        if (tryMove(x,y,x-dir,y-1, canFireMoveInto)) return;
+        if (tryMove(x,y,x+dir,y, canFireMoveInto)) return;
+        tryMove(x,y,x-dir,y, canFireMoveInto);
+      }
+    },
+
+    [ID.ASH]: {
+      name:"Ash", color:[90,90,95,255], solid:true,
+      update(grid,x,y,rng) {
+        // behaves like sand but a bit "lighter"
+        if (tryMoveOrSwap(x,y,x,y+1, canFallIntoEmptyOrGas)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMoveOrSwap(x,y,x+dir,y+1, canFallIntoEmptyOrGas)) return;
+        tryMoveOrSwap(x,y,x-dir,y+1, canFallIntoEmptyOrGas);
+      }
+    },
+
+    [ID.SMOKE]: {
+      name:"Smoke", color:[160,160,160,90], gas:true,
+      update(grid,x,y,rng) {
+        // like gas but slightly more lingering
+        if (tryMove(x,y,x,y-1, canGasMoveInto)) return;
+        const dir = rng()<0.5 ? -1 : 1;
+        if (tryMove(x,y,x+dir,y-1, canGasMoveInto)) return;
+        if (tryMove(x,y,x-dir,y-1, canGasMoveInto)) return;
+        if (rng() < 0.5) {
+          if (tryMove(x,y,x+dir,y, canGasMoveInto)) return;
+          tryMove(x,y,x-dir,y, canGasMoveInto);
+        }
+      }
+    },
+  };
+
+  // ===== Canvas =====
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d", { alpha:true });
+  const off = document.createElement("canvas");
+  const offCtx = off.getContext("2d");
+
+  let W = 240, H = 160;
+
+  function fitToScreen() {
+    const headerFooter = 132;
+    const vw = window.innerWidth;
+    const vh = Math.max(200, window.innerHeight - headerFooter);
+    const targetW = Math.max(120, Math.floor(vw / cellSize));
+    const targetH = Math.max(80,  Math.floor(vh / cellSize));
+    const capW = Math.min(targetW, 420);
+    const capH = Math.min(targetH, 260);
+
+    if (capW !== W || capH !== H) { W = capW; H = capH; allocGrid(); }
+    canvas.width = W * cellSize;
+    canvas.height = H * cellSize;
+    canvas.style.width = "100vw";
+    canvas.style.height = vh + "px";
+    off.width = W; off.height = H;
+  }
+  window.addEventListener("resize", fitToScreen);
+
+  // ===== Grid storage =====
+  let grid, updated, temp, nextTemp, burn, fireLife;
+
+  function allocGrid() {
+    grid = new Uint8Array(W * H);
+    updated = new Uint8Array(W * H);
+    temp = new Float32Array(W * H);
+    nextTemp = new Float32Array(W * H);
+    burn = new Uint16Array(W * H);     // burning timer for flammables (0 = not burning)
+    fireLife = new Uint8Array(W * H);  // for FIRE element only
+    for (let i = 0; i < temp.length; i++) temp[i] = AMBIENT;
+  }
+
+  function idx(x,y){ return x + y*W; }
+  function inBounds(x,y){ return x>=0 && x<W && y>=0 && y<H; }
+
+  // ===== Fast RNG =====
+  let seed = 1337;
+  function rng() {
+    seed ^= seed << 13; seed |= 0;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;  seed |= 0;
+    return ((seed >>> 0) / 4294967296);
+  }
+
+  // ===== Movement helpers =====
+  function swapCells(x1,y1,x2,y2){
+    const i1=idx(x1,y1), i2=idx(x2,y2);
+    let t = grid[i1]; grid[i1]=grid[i2]; grid[i2]=t;
+    // swap associated state
+    t = temp[i1]; temp[i1]=temp[i2]; temp[i2]=t;
+    t = burn[i1]; burn[i1]=burn[i2]; burn[i2]=t;
+    t = fireLife[i1]; fireLife[i1]=fireLife[i2]; fireLife[i2]=t;
+
+    updated[i1]=1; updated[i2]=1;
+    return true;
+  }
+  function moveCell(x1,y1,x2,y2){
+    const i1=idx(x1,y1), i2=idx(x2,y2);
+    grid[i2]=grid[i1]; grid[i1]=ID.EMPTY;
+
+    temp[i2]=temp[i1]; temp[i1]=AMBIENT;
+    burn[i2]=burn[i1]; burn[i1]=0;
+    fireLife[i2]=fireLife[i1]; fireLife[i1]=0;
+
+    updated[i1]=1; updated[i2]=1;
+    return true;
+  }
+  function tryMove(x1,y1,x2,y2, canInto){
+    if (!inBounds(x2,y2)) return false;
+    const from=grid[idx(x1,y1)], to=grid[idx(x2,y2)];
+    if (canInto(from,to)) return moveCell(x1,y1,x2,y2);
+    return false;
+  }
+  function tryMoveOrSwap(x1,y1,x2,y2, rule){
+    if (!inBounds(x2,y2)) return false;
+    const from=grid[idx(x1,y1)], to=grid[idx(x2,y2)];
+    const action = rule(from,to);
+    if (action==="MOVE") return moveCell(x1,y1,x2,y2);
+    if (action==="SWAP") return swapCells(x1,y1,x2,y2);
+    return false;
+  }
+
+  // ===== Rules =====
+  function canWaterMoveInto(from,to){ return (to===ID.EMPTY || to===ID.GAS || to===ID.SMOKE || to===ID.FIRE); }
+  function canGasMoveInto(from,to){ return (to===ID.EMPTY); }
+  function canFireMoveInto(from,to){
+    // fire can move into empty/gas/smoke; avoids liquids/solids
+    return (to===ID.EMPTY || to===ID.GAS || to===ID.SMOKE);
+  }
+  function canMoltenMoveInto(from,to){
+    // molten can move into empty/gas/smoke/fire and swap with water (sinks)
+    if (to===ID.EMPTY || to===ID.GAS || to===ID.SMOKE || to===ID.FIRE) return true;
+    if (to===ID.WATER) return true; // treated as move (will replace water)
+    return false;
+  }
+  function canBlockFallInto(from,to){
+    // wood block falls into empty/gas/smoke/fire (not into water)
+    return (to===ID.EMPTY || to===ID.GAS || to===ID.SMOKE || to===ID.FIRE);
+  }
+  function canFallThroughForSand(from,to){
+    if (to===ID.EMPTY || to===ID.GAS || to===ID.SMOKE || to===ID.FIRE) return "MOVE";
+    if (to===ID.WATER) return "SWAP";
+    return "NO";
+  }
+  function canFallIntoEmptyOrGas(from,to){
+    if (to===ID.EMPTY || to===ID.GAS || to===ID.SMOKE) return "MOVE";
+    return "NO";
+  }
+
+  // ===== UI / painting =====
+  const brushSlider=document.getElementById("brush");
+  const brushVal=document.getElementById("brushVal");
+  brushSlider.addEventListener("input",()=>brushVal.textContent=brushSlider.value);
+
+  const speedSlider=document.getElementById("speed");
+  const speedVal=document.getElementById("speedVal");
+  speedSlider.addEventListener("input",()=>speedVal.textContent=speedSlider.value);
+
+  const heatSlider=document.getElementById("heat");
+  const heatVal=document.getElementById("heatVal");
+  heatSlider.addEventListener("input",()=>heatVal.textContent=heatSlider.value);
+
+  const elemSelect=document.getElementById("elem");
+
+  function getPaintId(){
+    const v=elemSelect.value;
+    if (v==="SAND") return ID.SAND;
+    if (v==="WATER") return ID.WATER;
+    if (v==="GAS") return ID.GAS;
+    if (v==="METAL") return ID.METAL;
+    if (v==="MOLTEN") return ID.MOLTEN_METAL;
+    if (v==="WOOD") return ID.WOOD;
+    if (v==="FIRE") return ID.FIRE;
+    if (v==="WALL") return ID.WALL;
+    if (v==="ERASE") return ID.EMPTY;
+    return ID.SAND;
+  }
+
+  let painting=false, lastPaint=null;
+
+  function canvasToCell(e){
+    const r=canvas.getBoundingClientRect();
+    const x=(e.clientX-r.left)*(canvas.width/r.width);
+    const y=(e.clientY-r.top)*(canvas.height/r.height);
+    return {cx:Math.floor(x/cellSize), cy:Math.floor(y/cellSize)};
+  }
+
+  function paintAtCell(cx,cy){
+    const r=parseInt(brushSlider.value,10);
+    const idToPlace=getPaintId();
+    const heatDelta=parseInt(heatSlider.value,10);
+
+    for (let dy=-r; dy<=r; dy++){
+      for (let dx=-r; dx<=r; dx++){
+        if (dx*dx+dy*dy>r*r) continue;
+        const x=cx+dx, y=cy+dy;
+        if (!inBounds(x,y)) continue;
+        const i=idx(x,y);
+
+        if (idToPlace !== null) {
+          if (grid[i]===ID.WALL && idToPlace!==ID.EMPTY) continue;
+          grid[i]=idToPlace;
+          // initialize fire life if painting fire
+          if (idToPlace===ID.FIRE) fireLife[i]=randInt(FIRE_LIFE_MIN,FIRE_LIFE_MAX);
+          if (idToPlace===ID.EMPTY) { burn[i]=0; fireLife[i]=0; temp[i]=AMBIENT; }
+        }
+
+        if (heatDelta !== 0) temp[i] += heatDelta;
+      }
+    }
+  }
+
+  function paintLine(a,b){
+    let x0=a.cx, y0=a.cy, x1=b.cx, y1=b.cy;
+    const dx=Math.abs(x1-x0), sx=x0<x1?1:-1;
+    const dy=-Math.abs(y1-y0), sy=y0<y1?1:-1;
+    let err=dx+dy;
+    while(true){
+      paintAtCell(x0,y0);
+      if (x0===x1 && y0===y1) break;
+      const e2=2*err;
+      if (e2>=dy){ err+=dy; x0+=sx; }
+      if (e2<=dx){ err+=dx; y0+=sy; }
+    }
+  }
+
+  canvas.addEventListener("contextmenu", e=>e.preventDefault());
+  canvas.addEventListener("pointerdown",(e)=>{
+    painting=true; canvas.setPointerCapture(e.pointerId);
+    const p=canvasToCell(e); lastPaint=p;
+    paintAtCell(p.cx,p.cy);
+  });
+  canvas.addEventListener("pointermove",(e)=>{
+    if(!painting) return;
+    const p=canvasToCell(e);
+    if(lastPaint) paintLine(lastPaint,p);
+    lastPaint=p;
+  });
+  canvas.addEventListener("pointerup",()=>{painting=false; lastPaint=null;});
+  canvas.addEventListener("pointercancel",()=>{painting=false; lastPaint=null;});
+
+  window.addEventListener("keydown",(e)=>{
+    if(e.code==="Space"){ togglePause(); e.preventDefault(); }
+    if(e.key==="1") elemSelect.value="SAND";
+    if(e.key==="2") elemSelect.value="WATER";
+    if(e.key==="3") elemSelect.value="GAS";
+    if(e.key==="4") elemSelect.value="METAL";
+    if(e.key==="5") elemSelect.value="WOOD";
+    if(e.key==="6") elemSelect.value="FIRE";
+    if(e.key.toLowerCase()==="e") elemSelect.value="ERASE";
+  });
+
+  function randInt(a,b){ return (a + Math.floor(rng()*(b-a+1)))|0; }
+
+  // ===== Heat / fire / phase change =====
+  function heatStep() {
+    // Start with current temps
+    nextTemp.set(temp);
+
+    // diffusion (4-neighborhood)
+    for (let y=0; y<H; y++){
+      for (let x=0; x<W; x++){
+        const i=idx(x,y);
+        const t=temp[i];
+        let acc = 0, n=0;
+
+        if (x>0)   { acc += temp[i-1]; n++; }
+        if (x<W-1) { acc += temp[i+1]; n++; }
+        if (y>0)   { acc += temp[i-W]; n++; }
+        if (y<H-1) { acc += temp[i+W]; n++; }
+
+        const avg = n ? (acc / n) : t;
+        nextTemp[i] = t + (avg - t) * DIFFUSE;
+
+        // cool toward ambient
+        nextTemp[i] += (AMBIENT - nextTemp[i]) * COOL_TO_AMBIENT;
+      }
+    }
+
+    // Fire + burning heat injection + interactions
+    for (let y=0; y<H; y++){
+      for (let x=0; x<W; x++){
+        const i=idx(x,y);
+        const mat = grid[i];
+
+        // FIRE material: heats around it, loses life, may create smoke
+        if (mat === ID.FIRE) {
+          // local temp stays hot
+          nextTemp[i] = Math.max(nextTemp[i], AMBIENT + 650);
+
+          // heat neighbors
+          heatNeighborhood(nextTemp, x, y, FIRE_HEAT);
+
+          // burn out
+          if (fireLife[i] === 0) fireLife[i] = randInt(FIRE_LIFE_MIN,FIRE_LIFE_MAX);
+          fireLife[i]--;
+          if (fireLife[i] === 0) {
+            // turn into smoke or disappear
+            if (rng() < 0.7) { grid[i] = ID.SMOKE; }
+            else { grid[i] = ID.EMPTY; }
+          }
+          continue;
+        }
+
+        // Burning state on non-fire cells (e.g., wood)
+        if (burn[i] > 0) {
+          nextTemp[i] = Math.max(nextTemp[i], AMBIENT + 420);
+          heatNeighborhood(nextTemp, x, y, BURN_HEAT);
+
+          burn[i]--;
+          if (burn[i] === 0) {
+            // wood becomes ash when done
+            if (mat === ID.WOOD) grid[i] = ID.ASH;
+          }
+        }
+      }
+    }
+
+    // Commit temps
+    temp.set(nextTemp);
+
+    // Ignition checks + metal phase change (uses committed temp)
+    for (let y=0; y<H; y++){
+      for (let x=0; x<W; x++){
+        const i=idx(x,y);
+        const mat = grid[i];
+
+        // Metal melting/freezing
+        if (mat === ID.METAL && temp[i] >= METAL_MELT_AT) {
+          grid[i] = ID.MOLTEN_METAL;
+        } else if (mat === ID.MOLTEN_METAL && temp[i] <= METAL_FREEZE_AT) {
+          grid[i] = ID.METAL;
+        }
+
+        // Flammable ignition (wood)
+        if (mat === ID.WOOD && burn[i] === 0) {
+          const nearFire = hasNeighborOf(i, ID.FIRE);
+          if (nearFire || temp[i] >= WOOD_IGNITE_AT) {
+            burn[i] = WOOD_BURNOUT_TIME;
+            // optionally spawn some fire above/adjacent
+            if (rng() < 0.55) trySpawnFireNear(x,y);
+          }
+        }
+
+        // Water extinguishes fire/burning adjacent a bit (simple)
+        if (mat === ID.WATER) {
+          // reduce burning next to water
+          dampenBurningNear(x,y);
+        }
+      }
+    }
+  }
+
+  function heatNeighborhood(arr, x, y, amount) {
+    // add heat to 4-neighbors + self (bounded)
+    const i=idx(x,y);
+    arr[i] += amount * 0.15;
+
+    if (x>0)   arr[i-1] += amount * 0.25;
+    if (x<W-1) arr[i+1] += amount * 0.25;
+    if (y>0)   arr[i-W] += amount * 0.25;
+    if (y<H-1) arr[i+W] += amount * 0.25;
+  }
+
+  function hasNeighborOf(i, type) {
+    const x = i % W, y = (i / W) | 0;
+    if (x>0   && grid[i-1]===type) return true;
+    if (x<W-1 && grid[i+1]===type) return true;
+    if (y>0   && grid[i-W]===type) return true;
+    if (y<H-1 && grid[i+W]===type) return true;
+    return false;
+  }
+
+  function trySpawnFireNear(x,y){
+    const spots = [
+      [x, y-1],[x+1,y],[x-1,y],[x,y+1]
+    ];
+    for (let k=0; k<spots.length; k++){
+      const j = (k + (rng()*spots.length|0)) % spots.length;
+      const sx=spots[j][0], sy=spots[j][1];
+      if (!inBounds(sx,sy)) continue;
+      const si=idx(sx,sy);
+      if (grid[si]===ID.EMPTY || grid[si]===ID.GAS || grid[si]===ID.SMOKE) {
+        grid[si]=ID.FIRE;
+        fireLife[si]=randInt(FIRE_LIFE_MIN,FIRE_LIFE_MAX);
+        temp[si]=Math.max(temp[si], AMBIENT+600);
+        break;
+      }
+    }
+  }
+
+  function dampenBurningNear(x,y){
+    const i=idx(x,y);
+    const neigh = [];
+    if (x>0) neigh.push(i-1);
+    if (x<W-1) neigh.push(i+1);
+    if (y>0) neigh.push(i-W);
+    if (y<H-1) neigh.push(i+W);
+
+    for (const ni of neigh) {
+      if (grid[ni] === ID.FIRE) {
+        // water kills fire sometimes
+        if (rng() < 0.65) { grid[ni]=ID.SMOKE; fireLife[ni]=0; }
+      }
+      if (burn[ni] > 0) {
+        // water reduces burning time
+        burn[ni] = (burn[ni] * 0.92) | 0;
+        temp[ni] -= 6;
+      }
+    }
+  }
+
+  // ===== Simulation step =====
+  let paused=false;
+
+  function updateCell(x,y, phase){
+    const i=idx(x,y);
+    if (updated[i]) return;
+    const t=grid[i];
+    if (t===ID.EMPTY || t===ID.WALL) return;
+
+    if (phase===0) {
+      // solids/liquids bottom-up
+      if (t===ID.SAND || t===ID.WATER || t===ID.MOLTEN_METAL || t===ID.WOOD || t===ID.ASH) {
+        ELEMENTS[t].update?.(grid,x,y,rng);
+      }
+    } else {
+      // gases/fire/smoke top-down
+      if (t===ID.GAS || t===ID.FIRE || t===ID.SMOKE) {
+        ELEMENTS[t].update?.(grid,x,y,rng);
+      }
+    }
+  }
+
+  function stepOnce(){
+    updated.fill(0);
+
+    // heat first, so movement uses updated states (and newly ignited / melted)
+    heatStep();
+
+    // bottom-up pass for solids/liquids
+    for (let y=H-1; y>=0; y--){
+      const ltr = rng()<0.5;
+      if (ltr) for (let x=0; x<W; x++) updateCell(x,y,0);
+      else     for (let x=W-1; x>=0; x--) updateCell(x,y,0);
+    }
+
+    // top-down pass for gases/fire
+    for (let y=0; y<H; y++){
+      const ltr = rng()<0.5;
+      if (ltr) for (let x=0; x<W; x++) updateCell(x,y,1);
+      else     for (let x=W-1; x>=0; x--) updateCell(x,y,1);
+    }
+  }
+
+  // ===== Rendering =====
+  function render(){
+    const img=offCtx.createImageData(W,H);
+    const d=img.data;
+
+    for (let i=0; i<grid.length; i++){
+      const mat=grid[i];
+      const base=ELEMENTS[mat].color;
+      let r=base[0], g=base[1], b=base[2], a=base[3];
+
+      // Visual cue for burning cells (not FIRE material)
+      if (burn[i] > 0 && mat !== ID.FIRE) {
+        r = Math.min(255, r + 60);
+        g = Math.min(255, g + 30);
+      }
+
+      // Slight heat tint for molten/metal
+      if (mat === ID.METAL || mat === ID.MOLTEN_METAL) {
+        const t = temp[i];
+        const hot = Math.max(0, Math.min(1, (t - 200) / 600));
+        r = Math.min(255, r + hot * 40);
+        g = Math.min(255, g + hot * 10);
+      }
+
+      const di=i*4;
+      d[di+0]=r; d[di+1]=g; d[di+2]=b; d[di+3]=a;
+    }
+
+    offCtx.putImageData(img,0,0);
+    ctx.imageSmoothingEnabled=false;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(off,0,0,canvas.width,canvas.height);
+  }
+
+  // ===== Controls =====
+  document.getElementById("clear").addEventListener("click",()=>{
+    grid.fill(ID.EMPTY);
+    burn.fill(0);
+    fireLife.fill(0);
+    for (let i=0; i<temp.length; i++) temp[i]=AMBIENT;
+  });
+
+  const pauseBtn=document.getElementById("pause");
+  function togglePause(){
+    paused=!paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+  }
+  pauseBtn.addEventListener("click",togglePause);
+
+  // ===== Main loop =====
+  function loop(){
+    const speed=parseInt(speedSlider.value,10);
+    if(!paused){
+      for(let i=0;i<speed;i++) stepOnce();
+    }
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // init
+  fitToScreen();
+  if(!grid) allocGrid();
+  loop();
+})();
+</script>
+</body>
+</html>
