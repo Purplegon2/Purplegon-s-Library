@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>File Bytes → PNG</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    label { display: inline-flex; gap: 8px; align-items: center; }
+    input[type="number"] { width: 110px; }
+    canvas { border: 1px solid #ccc; max-width: 100%; height: auto; image-rendering: pixelated; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .muted { color: #555; }
+    button { padding: 8px 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>File Bytes → PNG</h1>
+
+  <div class="row">
+    <input id="file" type="file" />
+    <label>Width (px):
+      <input id="width" type="number" min="1" step="1" placeholder="auto" />
+    </label>
+    <label>Mapping:
+      <select id="mode">
+        <option value="rgba">RGBA (4 bytes/pixel)</option>
+        <option value="rgb">RGB (3 bytes/pixel, alpha=255)</option>
+      </select>
+    </label>
+    <button id="download" disabled>Download PNG</button>
+  </div>
+
+  <p class="muted">
+    This converts the raw bytes of any file into pixels. No upload; it runs in your browser.
+  </p>
+
+  <p class="mono" id="info"></p>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const elFile = document.getElementById("file");
+    const elWidth = document.getElementById("width");
+    const elMode = document.getElementById("mode");
+    const elInfo = document.getElementById("info");
+    const elCanvas = document.getElementById("canvas");
+    const elDownload = document.getElementById("download");
+    const ctx = elCanvas.getContext("2d", { willReadFrequently: false });
+
+    function ceilDiv(a, b) {
+      return Math.floor((a + b - 1) / b);
+    }
+
+    function autoWidthFor(pixels) {
+      // Roughly square.
+      return Math.max(1, Math.ceil(Math.sqrt(pixels)));
+    }
+
+    async function fileToPng(file) {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+
+      const mode = elMode.value; // "rgba" or "rgb"
+      const bytesPerPixel = (mode === "rgba") ? 4 : 3;
+
+      const pixelCount = ceilDiv(bytes.length, bytesPerPixel);
+
+      let width = parseInt(elWidth.value, 10);
+      if (!Number.isFinite(width) || width <= 0) width = autoWidthFor(pixelCount);
+
+      const height = ceilDiv(pixelCount, width);
+
+      elCanvas.width = width;
+      elCanvas.height = height;
+
+      const img = ctx.createImageData(width, height);
+      const out = img.data; // Uint8ClampedArray length = width*height*4
+
+      // Fill with opaque black by default.
+      for (let i = 0; i < out.length; i += 4) {
+        out[i + 0] = 0;
+        out[i + 1] = 0;
+        out[i + 2] = 0;
+        out[i + 3] = 255;
+      }
+
+      // Map file bytes into pixels.
+      // rgba: [r,g,b,a] = next 4 bytes (pad missing with 0)
+      // rgb:  [r,g,b]   = next 3 bytes, a=255
+      let bi = 0;
+      for (let p = 0; p < pixelCount; p++) {
+        const oi = p * 4;
+
+        const b0 = (bi < bytes.length) ? bytes[bi++] : 0;
+        const b1 = (bi < bytes.length) ? bytes[bi++] : 0;
+        const b2 = (bi < bytes.length) ? bytes[bi++] : 0;
+
+        out[oi + 0] = b0;
+        out[oi + 1] = b1;
+        out[oi + 2] = b2;
+
+        if (mode === "rgba") {
+          const b3 = (bi < bytes.length) ? bytes[bi++] : 255; // if missing, keep visible
+          out[oi + 3] = b3;
+        } else {
+          out[oi + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(img, 0, 0);
+
+      elInfo.textContent =
+        `File: ${file.name} | Size: ${bytes.length} bytes | Mode: ${mode.toUpperCase()} | ` +
+        `Image: ${width}×${height} (${width * height} px)`;
+
+      elDownload.disabled = false;
+    }
+
+    elFile.addEventListener("change", async () => {
+      const file = elFile.files && elFile.files[0];
+      if (!file) return;
+      try {
+        elDownload.disabled = true;
+        await fileToPng(file);
+      } catch (e) {
+        elInfo.textContent = "Error: " + (e && e.message ? e.message : String(e));
+        elDownload.disabled = true;
+      }
+    });
+
+    elMode.addEventListener("change", async () => {
+      const file = elFile.files && elFile.files[0];
+      if (file) await fileToPng(file);
+    });
+
+    elWidth.addEventListener("change", async () => {
+      const file = elFile.files && elFile.files[0];
+      if (file) await fileToPng(file);
+    });
+
+    elDownload.addEventListener("click", () => {
+      const file = elFile.files && elFile.files[0];
+      if (!file) return;
+
+      elCanvas.toBlob((blob) => {
+        if (!blob) return;
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        const base = file.name.replace(/\.[^/.]+$/, "");
+        a.download = `${base || "output"}_bytes.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    });
+  </script>
+</body>
+</html>
