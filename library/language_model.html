@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Small Language Model (Browser, TF.js)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;line-height:1.4}
+    h1{font-size:1.4rem;margin:0 0 8px}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;flex:1;min-width:260px}
+    textarea{width:100%;min-height:160px;font-family:ui-monospace,Consolas,monospace}
+    input[type="number"]{width:100px}
+    button{padding:8px 12px;border-radius:8px;border:1px solid #333;background:#fff;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .mono{font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap}
+    .small{font-size:.9rem;color:#555}
+    progress{width:100%}
+  </style>
+</head>
+<body>
+  <h1>Small Language Model (character LSTM) - You should probably lower the settings, training might light your GPU on fire</h1>
+  <div class="row">
+    <div class="card">
+      <h3>1) Gather data</h3>
+      <textarea id="textData" placeholder="Paste training text here"></textarea>
+      <div class="small">Or load:</div>
+      <input type="file" id="fileInput" accept=".txt" />
+      <div style="margin-top:8px">
+        <input id="urlInput" placeholder="https://example.com/data.txt" style="width:70%" />
+        <button id="fetchBtn">Fetch</button>
+      </div>
+      <div class="small" id="dataStats"></div>
+    </div>
+
+    <div class="card">
+      <h3>2) Model config</h3>
+      <div>Sequence length <input id="seqLen" type="number" value="120" min="32" max="512" step="8"></div>
+      <div>Embedding dim <input id="embDim" type="number" value="64" min="16" max="256" step="16"></div>
+      <div>LSTM units <input id="lstmUnits" type="number" value="128" min="32" max="512" step="32"></div>
+      <div>Batch size <input id="batchSize" type="number" value="64" min="8" max="512" step="8"></div>
+      <div>Epochs <input id="epochs" type="number" value="3" min="1" max="50" step="1"></div>
+      <div>Learning rate <input id="lr" type="number" value="0.001" step="0.0001"></div>
+      <div style="margin-top:8px">
+        <button id="buildBtn">Build model</button>
+        <button id="trainBtn" disabled>Train</button>
+      </div>
+      <div class="small mono" id="modelInfo"></div>
+      <div style="margin-top:8px"><progress id="prog" value="0" max="1"></progress></div>
+      <div class="small mono" id="log"></div>
+    </div>
+
+    <div class="card">
+      <h3>3) Generate</h3>
+      <textarea id="prompt" placeholder="Prompt text"></textarea>
+      <div>Max tokens <input id="genLen" type="number" value="200" min="1" max="2000"></div>
+      <div>Temperature <input id="temp" type="number" value="0.8" step="0.05" min="0.1" max="2.0"></div>
+      <div>Top-k <input id="topk" type="number" value="40" min="1" max="200"></div>
+      <div style="margin-top:8px">
+        <button id="genBtn" disabled>Generate</button>
+        <button id="exportBtn" disabled>Export model</button>
+        <button id="importBtn">Import model</button>
+        <input id="importFile" type="file" accept=".json,.bin" multiple style="display:none">
+      </div>
+      <div class="mono" id="output" style="margin-top:8px;min-height:120px;border:1px dashed #aaa;padding:8px;border-radius:8px"></div>
+    </div>
+  </div>
+
+<script>
+let vocab = [], stoi = new Map(), itos = [];
+let model = null, compiled = false, dataset = null;
+let text = "";
+
+const els = {
+  textData: document.getElementById('textData'),
+  fileInput: document.getElementById('fileInput'),
+  urlInput: document.getElementById('urlInput'),
+  fetchBtn: document.getElementById('fetchBtn'),
+  dataStats: document.getElementById('dataStats'),
+  seqLen: document.getElementById('seqLen'),
+  embDim: document.getElementById('embDim'),
+  lstmUnits: document.getElementById('lstmUnits'),
+  batchSize: document.getElementById('batchSize'),
+  epochs: document.getElementById('epochs'),
+  lr: document.getElementById('lr'),
+  buildBtn: document.getElementById('buildBtn'),
+  trainBtn: document.getElementById('trainBtn'),
+  modelInfo: document.getElementById('modelInfo'),
+  prog: document.getElementById('prog'),
+  log: document.getElementById('log'),
+  prompt: document.getElementById('prompt'),
+  genLen: document.getElementById('genLen'),
+  temp: document.getElementById('temp'),
+  topk: document.getElementById('topk'),
+  genBtn: document.getElementById('genBtn'),
+  output: document.getElementById('output'),
+  exportBtn: document.getElementById('exportBtn'),
+  importBtn: document.getElementById('importBtn'),
+  importFile: document.getElementById('importFile'),
+};
+
+function setText(t){
+  text = t.replace(/\r/g,"");
+  els.textData.value = text;
+  const size = new TextEncoder().encode(text).length;
+  els.dataStats.textContent = `Chars: ${text.length} | Bytes: ${size}`;
+}
+
+els.textData.addEventListener('input', e => setText(e.target.value));
+
+els.fileInput.addEventListener('change', async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const t = await f.text();
+  setText(t);
+});
+
+els.fetchBtn.addEventListener('click', async ()=>{
+  const url = els.urlInput.value.trim();
+  if(!url) return;
+  try{
+    const res = await fetch(url, {mode:'cors'});
+    const t = await res.text();
+    setText(t);
+  }catch(err){
+    alert('Fetch failed (CORS or network). Use paste or file.');
+  }
+});
+
+// ----- Tokenizer (character-level) -----
+function buildVocab(){
+  const set = new Set(text.split(''));
+  vocab = Array.from(set).sort();
+  stoi = new Map(vocab.map((c,i)=>[c,i]));
+  itos = vocab.slice();
+  els.dataStats.textContent += ` | Vocab: ${vocab.length}`;
+}
+
+function encode(str){
+  return Uint16Array.from(Array.from(str).map(ch => stoi.has(ch)? stoi.get(ch): 0));
+}
+function decode(ids){
+  let out = '';
+  for(const id of ids) out += itos[id] ?? '';
+  return out;
+}
+
+// ----- Dataset -----
+function makeDataset(seqLen){
+  const ids = encode(text);
+  const N = ids.length - seqLen - 1;
+  const X = new Uint16Array(N * seqLen);
+  const Y = new Uint16Array(N * seqLen);
+  for(let i=0;i<N;i++){
+    X.set(ids.subarray(i, i+seqLen), i*seqLen);
+    Y.set(ids.subarray(i+1, i+1+seqLen), i*seqLen);
+  }
+  return {X, Y, seqLen, N};
+}
+
+function batchGen(dataset, batchSize){
+  const {X, Y, seqLen, N} = dataset;
+  const idxs = tf.util.createShuffledIndices(N);
+  let ptr = 0;
+  return {
+    next: ()=>{
+      if(ptr >= N) return null;
+      const take = Math.min(batchSize, N - ptr);
+      const sel = idxs.slice(ptr, ptr+take);
+      const xb = new Uint16Array(take*seqLen);
+      const yb = new Uint16Array(take*seqLen);
+      for(let i=0;i<take;i++){
+        xb.set(X.subarray(sel[i]*seqLen, sel[i]*seqLen+seqLen), i*seqLen);
+        yb.set(Y.subarray(sel[i]*seqLen, sel[i]*seqLen+seqLen), i*seqLen);
+      }
+      ptr += take;
+      const xT = tf.tensor2d(xb, [take, seqLen], 'int32');
+      const yT = tf.tensor2d(yb, [take, seqLen], 'int32');
+      return {xT, yT};
+    }
+  };
+}
+
+// ----- Model -----
+function buildModel(vocabSize, embDim, lstmUnits, seqLen, lr){
+  const inp = tf.input({shape:[seqLen], dtype:'int32'});
+  const emb = tf.layers.embedding({inputDim:vocabSize, outputDim:embDim}).apply(inp);
+  const lstm1 = tf.layers.lstm({units:lstmUnits, returnSequences:true}).apply(emb);
+  const proj = tf.layers.dense({units:vocabSize, activation:'linear'}).apply(lstm1);
+  const m = tf.model({inputs:inp, outputs:proj});
+  const opt = tf.train.adam(lr);
+  m.compile({optimizer:opt, loss:tf.losses.sparseCategoricalCrossentropy, metrics:[]});
+  return m;
+}
+
+// ----- Training -----
+async function train(){
+  if(!model){ alert('Build model first'); return; }
+  if(!dataset){ alert('Load data first'); return; }
+  els.trainBtn.disabled = true;
+  els.genBtn.disabled = true;
+  const epochs = parseInt(els.epochs.value,10);
+  const batchSize = parseInt(els.batchSize.value,10);
+  const stepsPerEpoch = Math.max(1, Math.floor(dataset.N / batchSize));
+  els.log.textContent = '';
+  for(let e=0;e<epochs;e++){
+    const g = batchGen(dataset, batchSize);
+    let step = 0;
+    let epochLoss = 0;
+    for(let s=0;s<stepsPerEpoch;s++){
+      const b = g.next(); if(!b) break;
+      const {xT, yT} = b;
+      const his = await model.fit(xT, yT, {epochs:1, verbose:0});
+      const loss = his.history.loss[0];
+      epochLoss += loss;
+      step++;
+      els.prog.value = (e + (s+1)/stepsPerEpoch) / epochs;
+      els.log.textContent = `epoch ${e+1}/${epochs} step ${s+1}/${stepsPerEpoch} loss ${loss.toFixed(4)}`;
+      tf.dispose([xT, yT]);
+      await tf.nextFrame();
+    }
+    const avg = epochLoss / step;
+    els.log.textContent += ` | avg ${avg.toFixed(4)}\n`;
+  }
+  els.trainBtn.disabled = false;
+  els.genBtn.disabled = false;
+  els.exportBtn.disabled = false;
+}
+
+// ----- Sampling -----
+function topKSample(logits, k, temperature){
+  const t = tf.div(logits, temperature);
+  const vals = t.dataSync();
+  const idxs = vals.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]).slice(0, k);
+  const exp = idxs.map(([v])=>Math.exp(v - idxs[0][0]));
+  const sum = exp.reduce((a,b)=>a+b,0);
+  let r = Math.random() * sum;
+  for(let i=0;i<idxs.length;i++){
+    r -= exp[i];
+    if(r<=0) return idxs[i][1];
+  }
+  return idxs[idxs.length-1][1];
+}
+
+async function generate(){
+  if(!model) return;
+  let context = els.prompt.value || ' ';
+  const seqLen = parseInt(els.seqLen.value,10);
+  const maxNew = parseInt(els.genLen.value,10);
+  const temperature = parseFloat(els.temp.value);
+  const k = Math.max(1, parseInt(els.topk.value,10));
+  let ids = Array.from(encode(context));
+  // pad or trim to seqLen
+  if(ids.length < seqLen){
+    const pad = new Array(seqLen - ids.length).fill(0);
+    ids = pad.concat(ids);
+  }else{
+    ids = ids.slice(-seqLen);
+  }
+  for(let i=0;i<maxNew;i++){
+    const x = tf.tensor2d(ids, [1, seqLen], 'int32');
+    const logits3D = model.predict(x);
+    const logits = logits3D.slice([0, seqLen-1, 0],[1,1,vocab.length]).reshape([vocab.length]);
+    const nextId = topKSample(logits, Math.min(k, vocab.length), temperature);
+    ids.push(nextId);
+    ids = ids.slice(-seqLen);
+    x.dispose(); logits3D.dispose(); logits.dispose();
+    if(i % 20 === 0) await tf.nextFrame();
+  }
+  const gen = decode(ids.slice(-maxNew));
+  els.output.textContent = (els.prompt.value || '') + gen;
+}
+
+// ----- Export / Import -----
+async function exportModel(){
+  await model.save('downloads://slm-char-lstm');
+}
+
+els.importBtn.addEventListener('click', ()=> els.importFile.click());
+els.importFile.addEventListener('change', async e=>{
+  try{
+    model = await tf.loadLayersModel(tf.io.browserFiles(Array.from(e.target.files)));
+    compiled = true;
+    els.modelInfo.textContent = 'Imported model loaded.';
+    els.genBtn.disabled = false;
+    els.exportBtn.disabled = false;
+  }catch(err){ alert('Import failed'); }
+});
+
+// ----- Wire up -----
+els.buildBtn.addEventListener('click', ()=>{
+  if(!text || text.length < 500){
+    alert('Provide at least ~500 characters of training text. More is better.');
+    return;
+  }
+  buildVocab();
+  const seqLen = parseInt(els.seqLen.value,10);
+  dataset = makeDataset(seqLen);
+  model = buildModel(vocab.length,
+                     parseInt(els.embDim.value,10),
+                     parseInt(els.lstmUnits.value,10),
+                     seqLen,
+                     parseFloat(els.lr.value));
+  els.modelInfo.textContent =
+    `Vocab ${vocab.length} | Seq ${seqLen} | Params ~${(model.countParams()/1e6).toFixed(3)}M`;
+  els.trainBtn.disabled = false;
+  els.genBtn.disabled = true;
+  els.exportBtn.disabled = true;
+});
+
+els.trainBtn.addEventListener('click', ()=>train());
+els.genBtn.addEventListener('click', ()=>generate());
+els.exportBtn.addEventListener('click', ()=>exportModel());
+</script>
+</body>
+</html>
