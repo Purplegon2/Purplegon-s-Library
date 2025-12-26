@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>File → Pixels (+ fitted tones) → Video</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; line-height: 1.3; }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    label { display: inline-flex; gap: 8px; align-items: center; }
+    input[type="number"] { width: 96px; }
+    canvas { border: 1px solid #888; image-rendering: pixelated; max-width: 100%; height: auto; }
+    progress { width: 340px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    video, audio { max-width: 100%; border: 1px solid #888; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Convert any file into a “data video” + “tones” audio (audio squeezed to video length)</h2>
+
+  <div class="row">
+    <label>File: <input id="file" type="file" /></label>
+    <label>W: <input id="w" type="number" min="16" value="256" /></label>
+    <label>H: <input id="h" type="number" min="16" value="256" /></label>
+    <label>FPS: <input id="fps" type="number" min="1" value="30" /></label>
+  </div>
+
+  <div class="row" style="margin-top:10px;">
+    <label><input id="audioOn" type="checkbox" checked /> Generate audio (bytes as 8-bit PCM)</label>
+    <label>Audio Hz: <input id="sr" type="number" min="8000" value="8000" /></label>
+  </div>
+
+  <div class="row" style="margin-top:10px;">
+    <button id="go">Convert</button>
+    <button id="stop" disabled>Stop</button>
+    <progress id="prog" value="0" max="1"></progress>
+    <span id="status" class="mono"></span>
+  </div>
+
+  <div class="grid" style="margin-top:12px;">
+    <div>
+      <div class="mono">Live frame preview (canvas)</div>
+      <canvas id="c" width="256" height="256"></canvas>
+    </div>
+
+    <div>
+      <div class="mono">Video-only preview</div>
+      <video id="vidOnly" controls playsinline></video>
+      <div id="dlVideoOnly" class="mono"></div>
+    </div>
+
+    <div>
+      <div class="mono">Audio-only preview (WAV, fitted to video length)</div>
+      <audio id="audOnly" controls></audio>
+      <div id="dlAudioOnly" class="mono"></div>
+    </div>
+
+    <div>
+      <div class="mono">Combined preview (video + fitted audio)</div>
+      <video id="combined" controls playsinline></video>
+      <div id="dlCombined" class="mono"></div>
+    </div>
+  </div>
+
+  <hr />
+  <div class="mono">
+    Notes: In-browser MP4 recording is inconsistent across browsers. If MP4 fails or loses audio, the code will fall back to WebM when possible.
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    let lastUrls = { vidOnly: null, audOnly: null, combined: null };
+
+    function revokeAll() {
+      for (const k of Object.keys(lastUrls)) {
+        if (lastUrls[k]) URL.revokeObjectURL(lastUrls[k]);
+        lastUrls[k] = null;
+      }
+    }
+
+    function pickMime(preferMp4) {
+      const mp4 = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1.42E01E',
+        'video/mp4'
+      ];
+      const webm = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm'
+      ];
+      const list = preferMp4 ? [...mp4, ...webm] : [...webm, ...mp4];
+      for (const t of list) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
+      }
+      return '';
+    }
+
+    function bytesToImageData(bytes, offset, width, height) {
+      const ctx = $('c').getContext('2d', { willReadFrequently: true });
+      const img = ctx.createImageData(width, height);
+      const data = img.data;
+
+      let bi = offset;
+      for (let p = 0; p < width * height; p++) {
+        const di = p * 4;
+        data[di + 0] = (bi < bytes.length) ? bytes[bi++] : 0;
+        data[di + 1] = (bi < bytes.length) ? bytes[bi++] : 0;
+        data[di + 2] = (bi < bytes.length) ? bytes[bi++] : 0;
+        data[di + 3] = 255;
+      }
+      return img;
+    }
+
+    function bytesToPCMFloat32(bytes) {
+      const out = new Float32Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) out[i] = (bytes[i] - 128) / 128;
+      return out;
+    }
+
+    function raf() { return new Promise(r => requestAnimationFrame(r)); }
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    function audioBufferToWavBlob(audioBuffer) {
+      // 16-bit PCM WAV, mono
+      const numChannels = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const length = audioBuffer.length;
+
+      const ch0 = audioBuffer.getChannelData(0);
+
+      const bytesPerSample = 2;
+      const blockAlign = numChannels * bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = length * blockAlign;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, 16, true); // bits
+      writeStr(36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      let offset = 44;
+      for (let i = 0; i < length; i++) {
+        let s = ch0[i];
+        s = Math.max(-1, Math.min(1, s));
+        const int16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        view.setInt16(offset, int16, true);
+        offset += 2;
+      }
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    async function fitAudioToDuration(original, targetSeconds) {
+      // Time-scale by changing playbackRate and rendering offline to EXACT targetSeconds.
+      // playbackRate = originalDuration / targetSeconds (so new duration becomes targetSeconds).
+      const sr = original.sampleRate;
+      const targetLen = Math.max(1, Math.floor(targetSeconds * sr));
+
+      const offline = new OfflineAudioContext(1, targetLen, sr);
+      const src = offline.createBufferSource();
+      src.buffer = original;
+
+      const rate = (original.duration > 0 && targetSeconds > 0) ? (original.duration / targetSeconds) : 1.0;
+      src.playbackRate.value = rate;
+
+      src.connect(offline.destination);
+      src.start(0);
+
+      return await offline.startRendering();
+    }
+
+    function setDownload(container, url, filename, sizeBytes) {
+      container.innerHTML = '';
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.textContent = `Download ${filename} (${(sizeBytes / 1024 / 1024).toFixed(2)} MB)`;
+      container.appendChild(a);
+    }
+
+    async function recordStream(stream, mimeType) {
+      const chunks = [];
+      const rec = new MediaRecorder(stream, { mimeType });
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const done = new Promise((resolve) => {
+        rec.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+      });
+      rec.start(250);
+      return { rec, done };
+    }
+
+    $('go').onclick = async () => {
+      const f = $('file').files[0];
+      if (!f) return;
+
+      const width = Math.max(16, parseInt($('w').value || '256', 10));
+      const height = Math.max(16, parseInt($('h').value || '256', 10));
+      const fps = Math.max(1, parseInt($('fps').value || '30', 10));
+      const audioOn = $('audioOn').checked;
+      const sampleRateReq = Math.max(8000, parseInt($('sr').value || '8000', 10));
+
+      $('c').width = width;
+      $('c').height = height;
+
+      $('go').disabled = true;
+      $('stop').disabled = false;
+      $('prog').value = 0;
+      $('status').textContent = 'reading file…';
+
+      // Reset previews + downloads + URLs
+      revokeAll();
+      for (const id of ['vidOnly', 'audOnly', 'combined']) {
+        const el = $(id);
+        if (el) { el.pause(); el.removeAttribute('src'); el.load(); }
+      }
+      $('dlVideoOnly').textContent = '';
+      $('dlAudioOnly').textContent = '';
+      $('dlCombined').textContent = '';
+
+      const bytes = new Uint8Array(await f.arrayBuffer());
+
+      const bytesPerFrame = width * height * 3;
+      const totalFrames = Math.ceil(bytes.length / bytesPerFrame);
+      const videoDuration = totalFrames / fps;
+
+      // Build (and fit) audio first, separately.
+      let fittedAudioBuffer = null;
+      let audioCtx = null, audioDest = null, audioSrc = null, audioStream = null;
+
+      if (audioOn) {
+        $('status').textContent = 'building audio…';
+
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sampleRateReq });
+        await audioCtx.resume();
+
+        const pcm = bytesToPCMFloat32(bytes);
+        const original = audioCtx.createBuffer(1, pcm.length, audioCtx.sampleRate);
+        original.copyToChannel(pcm, 0);
+
+        // Squeeze/stretch to match the video duration exactly.
+        fittedAudioBuffer = await fitAudioToDuration(original, videoDuration);
+
+        // Export audio-only WAV (separate file)
+        const wavBlob = audioBufferToWavBlob(fittedAudioBuffer);
+        const wavUrl = URL.createObjectURL(wavBlob);
+        lastUrls.audOnly = wavUrl;
+        $('audOnly').src = wavUrl;
+        $('audOnly').load();
+        setDownload($('dlAudioOnly'), wavUrl, `${f.name}.fitted.wav`, wavBlob.size);
+
+        // Create an audio stream for muxing (separate generation step already done above)
+        audioDest = audioCtx.createMediaStreamDestination();
+        audioSrc = audioCtx.createBufferSource();
+        audioSrc.buffer = fittedAudioBuffer;
+        audioSrc.connect(audioDest);
+        audioStream = audioDest.stream;
+      }
+
+      // Video capture
+      const canvas = $('c');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const videoStream = canvas.captureStream(fps);
+      const videoTrack = videoStream.getVideoTracks()[0];
+
+      // Two recorders:
+      // - video-only
+      // - combined (video + fitted audio) if audioOn
+      const mimeVideoOnly = pickMime(true);
+      if (!mimeVideoOnly) {
+        $('status').textContent = 'MediaRecorder not supported in this browser.';
+        $('go').disabled = false;
+        $('stop').disabled = true;
+        try { if (audioCtx) await audioCtx.close(); } catch {}
+        return;
+      }
+
+      // Combined: prefer MP4, but if audio is present, WebM is usually more reliable.
+      const mimeCombined = audioOn ? pickMime(false) : mimeVideoOnly;
+
+      $('status').textContent = `encoding… video=${mimeVideoOnly}${audioOn ? `, combined=${mimeCombined}` : ''}`;
+
+      let stopped = false;
+
+      const { rec: recVid, done: doneVid } = await recordStream(videoStream, mimeVideoOnly);
+
+      let recMix = null, doneMix = null;
+      if (audioOn) {
+        const mixed = new MediaStream([
+          ...videoStream.getVideoTracks(),
+          ...audioStream.getAudioTracks()
+        ]);
+        const r = await recordStream(mixed, mimeCombined);
+        recMix = r.rec;
+        doneMix = r.done;
+      }
+
+      $('stop').onclick = () => {
+        stopped = true;
+        try { recVid.stop(); } catch {}
+        try { if (recMix) recMix.stop(); } catch {}
+      };
+
+      // Start fitted audio playback after recorders are running
+      if (audioOn && audioSrc) audioSrc.start();
+
+      const frameDelay = 1000 / fps;
+
+      for (let frame = 0; frame < totalFrames; frame++) {
+        if (stopped) break;
+
+        const offset = frame * bytesPerFrame;
+        const img = bytesToImageData(bytes, offset, width, height);
+        ctx.putImageData(img, 0, 0);
+
+        await raf();
+        if (videoTrack && typeof videoTrack.requestFrame === 'function') {
+          videoTrack.requestFrame();
+        }
+
+        $('prog').value = frame / totalFrames;
+        $('status').textContent = `encoding… frame ${frame + 1}/${totalFrames}`;
+
+        await sleep(frameDelay);
+      }
+
+      // Stop recorders if not already stopped
+      try { recVid.stop(); } catch {}
+      try { if (recMix) recMix.stop(); } catch {}
+
+      // Collect blobs
+      const vidBlob = await doneVid;
+      const vidUrl = URL.createObjectURL(vidBlob);
+      lastUrls.vidOnly = vidUrl;
+      $('vidOnly').src = vidUrl;
+      $('vidOnly').load();
+      const vidExt = mimeVideoOnly.includes('mp4') ? 'mp4' : 'webm';
+      setDownload($('dlVideoOnly'), vidUrl, `${f.name}.video-only.${vidExt}`, vidBlob.size);
+
+      if (audioOn && doneMix) {
+        const mixBlob = await doneMix;
+        const mixUrl = URL.createObjectURL(mixBlob);
+        lastUrls.combined = mixUrl;
+        $('combined').src = mixUrl;
+        $('combined').load();
+        const mixExt = mimeCombined.includes('mp4') ? 'mp4' : 'webm';
+        setDownload($('dlCombined'), mixUrl, `${f.name}.combined.${mixExt}`, mixBlob.size);
+      }
+
+      // Cleanup audio context
+      try { if (audioCtx) await audioCtx.close(); } catch {}
+
+      $('prog').value = 1;
+      $('status').textContent = 'done.';
+      $('go').disabled = false;
+      $('stop').disabled = true;
+    };
+  </script>
+</body>
+</html>
