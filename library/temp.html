@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Random Moon + Asteroid Generator (SpaceEngine-style)</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 20px; line-height: 1.25; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; max-width: 1100px; }
+    label { display: block; font-size: 12px; color: #333; margin-bottom: 6px; }
+    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 8px; }
+    input[type="number"] { width: 220px; }
+    button { padding: 10px 14px; border: 1px solid #333; border-radius: 10px; background: #111; color: #fff; cursor: pointer; }
+    button:active { transform: translateY(1px); }
+    .muted { color: #666; font-size: 12px; }
+    textarea { min-height: 420px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
+    th { background: #fafafa; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin:0 0 6px 0;">Moon + Asteroid Generator</h2>
+    <div class="muted">
+      Inputs: planet radius (km), planet mass (Earth masses), parent body name. Generates “Moons” (spherical, spaced out)
+      and “Asteroids” (clustered, closer-in). Output format matches your SpaceEngine-style blocks.
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <div class="row">
+      <div style="min-width:260px;">
+        <label>Parent body name</label>
+        <input id="parentName" value="Scurra" />
+      </div>
+      <div>
+        <label>Planet radius (km)</label>
+        <input id="planetRadius" type="number" step="0.1" value="65000" />
+      </div>
+      <div>
+        <label>Planet mass (Earth masses)</label>
+        <input id="planetMass" type="number" step="0.000001" value="50" />
+      </div>
+      <div>
+        <label># Moons (spherical)</label>
+        <input id="nMoons" type="number" step="1" value="3" min="0" />
+      </div>
+      <div>
+        <label># Asteroids (small)</label>
+        <input id="nAst" type="number" step="1" value="4" min="0" />
+      </div>
+      <div>
+        <label>Seed (optional)</label>
+        <input id="seed" value="auto" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div style="min-width:260px; flex: 1;">
+        <label>Hill sphere mode</label>
+        <select id="hillMode">
+          <option value="pseudo" selected>Pseudo (needs only radius+mass)</option>
+          <option value="physical">Physical (also needs star mass + orbital distance)</option>
+        </select>
+        <div class="muted">
+          Pseudo mode makes a reasonable “moon system size” from just radius+mass. Physical mode uses the real Hill formula.
+        </div>
+      </div>
+      <div style="min-width:220px;">
+        <label>Star mass (Solar masses) — physical mode</label>
+        <input id="starMass" type="number" step="0.0001" value="1" />
+      </div>
+      <div style="min-width:220px;">
+        <label>Planet orbital distance (AU) — physical mode</label>
+        <input id="orbAU" type="number" step="0.0001" value="1" />
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <button id="genBtn">Generate</button>
+      <button id="copyBtn" style="margin-left:8px; background:#fff; color:#111;">Copy output</button>
+      <span class="muted" id="meta" style="margin-left:10px;"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h3 style="margin:0 0 8px 0;">Preview</h3>
+    <div id="preview"></div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h3 style="margin:0 0 8px 0;">Generated config</h3>
+    <textarea id="out" spellcheck="false"></textarea>
+  </div>
+
+<script>
+/* -------------------- Seeded RNG (Mulberry32) -------------------- */
+function hashStringToU32(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function() {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randRange(rng, min, max) { return min + (max - min) * rng(); }
+function randInt(rng, min, maxIncl) { return Math.floor(randRange(rng, min, maxIncl + 1)); }
+function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+
+/* -------------------- Name generator (syllable+Markov-ish) -------------------- */
+const seedNames = [
+  "Ikernu","Malia","Radus","Naitii","Scaite","Talevia",
+  "Charayl","Kiatiate","Monacle","Kiethe","Polia","Alneim"
+];
+const syllables = [
+  "ka","ke","ki","ko","ku","ra","re","ri","ro","ru","na","ne","ni","no","nu",
+  "ta","te","ti","to","tu","la","le","li","lo","lu","sa","se","si","so","su",
+  "cha","che","chi","cho","chu","ya","ye","yi","yo","yu","ai","ei","ia","ie","oa","ui"
+];
+function buildBigramModel(names) {
+  const model = new Map();
+  function addPair(a,b) {
+    if (!model.has(a)) model.set(a, new Map());
+    const m = model.get(a);
+    m.set(b, (m.get(b) || 0) + 1);
+  }
+  for (const name of names) {
+    const s = "^" + name.toLowerCase() + "$";
+    for (let i = 0; i < s.length - 1; i++) addPair(s[i], s[i+1]);
+  }
+  return model;
+}
+const bigram = buildBigramModel(seedNames);
+function weightedNext(rng, map) {
+  let total = 0;
+  for (const v of map.values()) total += v;
+  let r = rng() * total;
+  for (const [k,v] of map.entries()) {
+    r -= v;
+    if (r <= 0) return k;
+  }
+  return Array.from(map.keys())[0];
+}
+function genName(rng) {
+  // 50/50: bigram character chain vs syllables.
+  if (rng() < 0.5) {
+    let s = "";
+    let c = "^";
+    for (let i = 0; i < 15; i++) {
+      const m = bigram.get(c) || bigram.get("^");
+      const n = weightedNext(rng, m);
+      if (n === "$") break;
+      s += n;
+      c = n;
+    }
+    if (s.length < 4) s += pick(rng, ["lia","nus","the","via","ryl","neim"]);
+    return s[0].toUpperCase() + s.slice(1);
+  } else {
+    const parts = randInt(rng, 2, 4);
+    let s = "";
+    for (let i = 0; i < parts; i++) s += pick(rng, syllables);
+    s = s.replace(/(.)\1\1/g, "$1$1"); // reduce triple repeats
+    return s[0].toUpperCase() + s.slice(1);
+  }
+}
+
+/* -------------------- Hill sphere estimate -------------------- */
+// Physical: rH = a * (Mp / (3*M*))^(1/3)
+function hillSphereKmPhysical(orbAU, planetMassEarth, starMassSolar) {
+  const AU_KM = 149597870.7;
+  const M_EARTH_IN_SOLAR = 3.003489e-6; // Earth masses per solar mass
+  const MpSolar = planetMassEarth * M_EARTH_IN_SOLAR;
+  const aKm = orbAU * AU_KM;
+  return aKm * Math.cbrt(MpSolar / (3 * starMassSolar));
+}
+// Pseudo: uses only planet radius and mass to make a plausible “satellite region”
+function hillSphereKmPseudo(planetRadiusKm, planetMassEarth) {
+  // Tuned for “moon system size” (not astrophysically strict).
+  // Bigger radius and mass -> larger region; mild scaling to avoid huge values.
+  const mScale = Math.cbrt(Math.max(planetMassEarth, 1e-9));
+  const base = planetRadiusKm * 120;          // baseline
+  const hill = base * clamp(mScale / 2.5, 0.25, 6.0);
+  return hill; // km
+}
+
+/* -------------------- Kepler period -------------------- */
+function periodDaysFromA(aKm, planetMassEarth) {
+  // P = 2π sqrt(a^3 / μ), μ = μ_earth * Mp
+  const MU_EARTH = 398600.4418; // km^3/s^2
+  const mu = MU_EARTH * Math.max(planetMassEarth, 1e-12);
+  const a3 = aKm * aKm * aKm;
+  const Psec = 2 * Math.PI * Math.sqrt(a3 / mu);
+  return Psec / 86400;
+}
+
+/* -------------------- Moon archetypes from your references -------------------- */
+const archetypeTerraIkernu = {
+  Class: "Terra",
+  // Surface preset based on Ikernu
+  SurfacePreset: "terra_wet_rusty_green_plants.cfg",
+  AlbedoBond: 0.536,
+  AlbedoGeom: 0.36,
+  AtmosModel: "Earth",
+  AtmosOpacity: 0.992
+};
+const archetypeAquariaMalia = {
+  Class: "Aquaria",
+  SurfacePreset: "aquaria_airless_white2.cfg",
+  AlbedoBond: 0.3,
+  AlbedoGeom: 0.36
+};
+
+function makeSurfaceBlock(rng, type) {
+  // Produces a “different looking” surface by jittering parameters around the reference style.
+  const surfStyle = clamp(randRange(rng, 0.10, 0.85), 0, 1);
+  const randomize = `(${randRange(rng,-1,1).toFixed(3)}, ${randRange(rng,-1,1).toFixed(3)}, ${randRange(rng,-1,1).toFixed(3)})`;
+  const detailScale = (type === "Terra") ? randRange(rng, 8e3, 6e4) : randRange(rng, 1.5e3, 8e3);
+  const mainFreq = (type === "Terra") ? randRange(rng, 1.5, 5.0) : randRange(rng, 1.2, 2.2);
+  const humidity = (type === "Terra") ? randRange(rng, 0.10, 0.55) : randRange(rng, 0.05, 0.45);
+
+  // Add volcanic/rift/canyon variation so moons don’t look identical.
+  const volcanoDensity = (type === "Terra") ? randRange(rng, 0.05, 0.45) : randRange(rng, 0.05, 0.30);
+  const riftsMagn = (type === "Terra") ? randRange(rng, 0.0, 4.0) : randRange(rng, 0.0, 1.2);
+  const canyonsMagn = randRange(rng, 0.1, 1.2);
+
+  return {
+    SurfStyle: surfStyle,
+    Randomize: randomize,
+    colorDistMagn: randRange(rng, 0.035, 0.09),
+    colorDistFreq: (type === "Terra") ? randRange(rng, 200, 1400) : randRange(rng, 30, 140),
+    detailScale: detailScale,
+    drivenDarkening: (type === "Terra") ? randRange(rng, 0.0, 0.3) : randRange(rng, 0.0, 0.9),
+    seaLevel: (type === "Terra") ? randRange(rng, -1.0, 0.35) : randRange(rng, 0.05, 0.35),
+    snowLevel: 2,
+    tropicLatitude: randRange(rng, 0.2, 1.0),
+    humidity: humidity,
+    mainFreq: mainFreq,
+    mareFreq: (type === "Terra") ? randRange(rng, 0.0, 0.01) : randRange(rng, 0.0, 0.03),
+    mareDensity: randRange(rng, 0.08, 0.18),
+    terraceProb: randRange(rng, 0.15, 0.50),
+    erosion: (type === "Terra") ? randRange(rng, 0.0, 0.35) : 0,
+    riftsMagn: riftsMagn,
+    riftsFreq: randRange(rng, 1.5, 5.0),
+    canyonsMagn: canyonsMagn,
+    canyonsFreq: randRange(rng, 0.12, 900),
+    craterMagn: randRange(rng, 0.25, 0.75),
+    craterFreq: randRange(rng, 0.7, 30),
+    craterDensity: (type === "Terra") ? randRange(rng, 0.0, 0.3) : randRange(rng, 0.5, 1.0),
+    craterOctaves: (type === "Terra") ? randInt(rng, 0, 6) : randInt(rng, 12, 20),
+    volcanoMagn: randRange(rng, 0.12, 0.85),
+    volcanoFreq: randRange(rng, 0.4, 1.1),
+    volcanoDensity: volcanoDensity,
+    volcanoOctaves: randInt(rng, 2, 4),
+    volcanoActivity: (type === "Terra") ? randRange(rng, 0.0, 3.0) : randRange(rng, 0.0, 0.6),
+    BumpHeight: randRange(rng, 12, 22),
+    DiffMapAlpha: (type === "Terra") ? `"Water"` : `"Ice"`,
+    SpecBrightWater: (type === "Terra") ? 0.65 : 0.03,
+    SpecBrightIce: (type === "Terra") ? 0.85 : 0.03,
+    RoughnessWater: 0.35,
+    RoughnessIce: 0.45,
+    SpecularScale: 1,
+    RoughnessBias: (type === "Terra") ? randRange(rng, 0.35, 0.65) : randRange(rng, 0.10, 0.30),
+    Hapke: (type === "Terra") ? 0.5 : 0.5,
+    SpotBright: randRange(rng, 2.0, 3.0),
+    SpotWidth: randRange(rng, 0.03, 0.06),
+    DayAmbient: 0.07
+  };
+}
+
+/* -------------------- Mass/Radius helpers -------------------- */
+function radiusKmFromMassAndDensity(massEarth, density_g_cm3) {
+  // Earth volume = 4/3 π R^3. Using Earth reference:
+  // R = R_earth * ( (M/Mearth) / (ρ/ρearth) )^(1/3)
+  const R_EARTH_KM = 6371.0;
+  const RHO_EARTH = 5.514; // g/cm^3 mean
+  const ratio = (massEarth / Math.max(1e-18, (density_g_cm3 / RHO_EARTH)));
+  return R_EARTH_KM * Math.cbrt(Math.max(ratio, 1e-18));
+}
+
+/* -------------------- Orbit packing -------------------- */
+function generateMajorMoonSemimajors(rng, hillKm, planetRadiusKm, n) {
+  if (n <= 0) return [];
+  const outer = hillKm * 0.45;                 // keep inside stable region
+  const inner = Math.max(planetRadiusKm * 6.0, hillKm * 0.03);
+  const span = Math.max(outer - inner, planetRadiusKm * 10);
+
+  // Draw radii, sort, then enforce spacing
+  let a = [];
+  for (let i = 0; i < n; i++) a.push(inner + span * (0.15 + 0.85 * rng()));
+  a.sort((x,y)=>x-y);
+
+  // enforce minimum separation growing with distance
+  for (let i = 1; i < a.length; i++) {
+    const minSep = Math.max(planetRadiusKm * 4.0, a[i-1] * randRange(rng, 0.08, 0.16));
+    if (a[i] < a[i-1] + minSep) a[i] = a[i-1] + minSep;
+  }
+  // clamp to outer
+  for (let i = 0; i < a.length; i++) a[i] = Math.min(a[i], outer);
+  // if clamped too hard, re-spread
+  a.sort((x,y)=>x-y);
+  return a;
+}
+
+function generateAsteroidSemimajors(rng, hillKm, planetRadiusKm, majorAs, nAst) {
+  if (nAst <= 0) return [];
+  const inner = Math.max(planetRadiusKm * 2.2, hillKm * 0.008);
+  const firstMajor = majorAs.length ? majorAs[0] : hillKm * 0.12;
+  const maxAst = Math.max(inner * 1.4, firstMajor * 0.75); // “closer-in” than big moons
+
+  // Make a few tight clusters (rings)
+  const clusters = Math.max(1, Math.min(3, Math.floor(nAst / 2)));
+  const centers = [];
+  for (let c = 0; c < clusters; c++) centers.push(randRange(rng, inner, maxAst));
+  centers.sort((a,b)=>a-b);
+
+  const out = [];
+  for (let i = 0; i < nAst; i++) {
+    const center = pick(rng, centers);
+    const jitter = center * randRange(rng, 0.002, 0.02);
+    out.push(clamp(center + randRange(rng, -jitter, jitter), inner, maxAst));
+  }
+  out.sort((a,b)=>a-b);
+
+  // allow them to be close together; just prevent identical values
+  for (let i = 1; i < out.length; i++) {
+    const minSep = planetRadiusKm * randRange(rng, 0.002, 0.02);
+    if (out[i] < out[i-1] + minSep) out[i] = out[i-1] + minSep;
+  }
+  return out;
+}
+
+/* -------------------- Config formatting -------------------- */
+function f(x, digits=6) {
+  if (!Number.isFinite(x)) return "0";
+  // keep small numbers in scientific notation if needed
+  if (Math.abs(x) > 0 && (Math.abs(x) < 1e-4 || Math.abs(x) > 1e6)) return x.toExponential(8);
+  return x.toFixed(digits).replace(/0+$/,"").replace(/\.$/,"");
+}
+function vec3(x,y,z) { return `(${x.toFixed(3)} ${y.toFixed(3)} ${z.toFixed(3)})`; }
+
+function moonBlock(m) {
+  const lines = [];
+  lines.push(`Moon\t"${m.Name}"`);
+  lines.push(`{`);
+  lines.push(`\tParentBody     "${m.ParentBody}"`);
+  lines.push(`\tClass          "${m.Class}"`);
+  lines.push(`\tMass            ${f(m.Mass, 12)}`);
+  lines.push(`\tRadius          ${f(m.Radius, 6)}`);
+  if (m.TidalLocked) lines.push(`\tTidalLocked     true`);
+  if (m.RotationPeriod != null) lines.push(`\tRotationPeriod  ${f(m.RotationPeriod, 8)}`);
+  if (m.Obliquity != null) lines.push(`\tObliquity       ${f(m.Obliquity, 8)}`);
+  if (m.EqAscendNode != null) lines.push(`\tEqAscendNode    ${f(m.EqAscendNode, 8)}`);
+  lines.push(``);
+  lines.push(`\tAlbedoBond      ${f(m.AlbedoBond, 3)}`);
+  lines.push(`\tAlbedoGeom      ${f(m.AlbedoGeom, 2)}`);
+  lines.push(`\tBrightness      1`);
+  lines.push(`\tBrightnessReal  1`);
+  if (m.Color) lines.push(`\tColor          ${m.Color}`);
+  lines.push(``);
+  lines.push(`\tSurface`);
+  lines.push(`\t{`);
+  lines.push(`\t\tPreset         "${m.SurfacePreset}"`);
+  lines.push(`\t\tSurfStyle       ${f(m.Surface.SurfStyle, 3)}`);
+  lines.push(`\t\tRandomize      ${m.Surface.Randomize}`);
+  lines.push(`\t\tcolorDistMagn   ${f(m.Surface.colorDistMagn, 4)}`);
+  lines.push(`\t\tcolorDistFreq   ${f(m.Surface.colorDistFreq, 2)}`);
+  lines.push(`\t\tdetailScale     ${f(m.Surface.detailScale, 2)}`);
+  lines.push(`\t\tdrivenDarkening ${f(m.Surface.drivenDarkening, 3)}`);
+  lines.push(`\t\tseaLevel        ${f(m.Surface.seaLevel, 3)}`);
+  lines.push(`\t\tsnowLevel       ${f(m.Surface.snowLevel, 0)}`);
+  lines.push(`\t\ttropicLatitude  ${f(m.Surface.tropicLatitude, 3)}`);
+  lines.push(`\t\thumidity        ${f(m.Surface.humidity, 3)}`);
+  lines.push(`\t\tmainFreq        ${f(m.Surface.mainFreq, 3)}`);
+  lines.push(`\t\tmareFreq        ${f(m.Surface.mareFreq, 3)}`);
+  lines.push(`\t\tmareDensity     ${f(m.Surface.mareDensity, 3)}`);
+  lines.push(`\t\tterraceProb     ${f(m.Surface.terraceProb, 3)}`);
+  lines.push(`\t\terosion         ${f(m.Surface.erosion, 3)}`);
+  lines.push(`\t\triftsMagn       ${f(m.Surface.riftsMagn, 3)}`);
+  lines.push(`\t\triftsFreq       ${f(m.Surface.riftsFreq, 3)}`);
+  lines.push(`\t\tcanyonsMagn     ${f(m.Surface.canyonsMagn, 3)}`);
+  lines.push(`\t\tcanyonsFreq     ${f(m.Surface.canyonsFreq, 3)}`);
+  lines.push(`\t\tcraterMagn      ${f(m.Surface.craterMagn, 3)}`);
+  lines.push(`\t\tcraterFreq      ${f(m.Surface.craterFreq, 3)}`);
+  lines.push(`\t\tcraterDensity   ${f(m.Surface.craterDensity, 3)}`);
+  lines.push(`\t\tcraterOctaves   ${f(m.Surface.craterOctaves, 0)}`);
+  lines.push(`\t\tvolcanoMagn     ${f(m.Surface.volcanoMagn, 3)}`);
+  lines.push(`\t\tvolcanoFreq     ${f(m.Surface.volcanoFreq, 3)}`);
+  lines.push(`\t\tvolcanoDensity  ${f(m.Surface.volcanoDensity, 3)}`);
+  lines.push(`\t\tvolcanoOctaves  ${f(m.Surface.volcanoOctaves, 0)}`);
+  lines.push(`\t\tvolcanoActivity ${f(m.Surface.volcanoActivity, 3)}`);
+  lines.push(`\t\tBumpHeight      ${f(m.Surface.BumpHeight, 2)}`);
+  lines.push(`\t\tDiffMapAlpha   ${m.Surface.DiffMapAlpha}`);
+  lines.push(`\t\tSpecBrightWater ${f(m.Surface.SpecBrightWater, 2)}`);
+  lines.push(`\t\tSpecBrightIce   ${f(m.Surface.SpecBrightIce, 2)}`);
+  lines.push(`\t\tRoughnessWater  ${f(m.Surface.RoughnessWater, 2)}`);
+  lines.push(`\t\tRoughnessIce    ${f(m.Surface.RoughnessIce, 2)}`);
+  lines.push(`\t\tSpecularScale   1`);
+  lines.push(`\t\tRoughnessBias   ${f(m.Surface.RoughnessBias, 2)}`);
+  lines.push(`\t\tHapke           ${f(m.Surface.Hapke, 2)}`);
+  lines.push(`\t\tSpotBright      ${f(m.Surface.SpotBright, 2)}`);
+  lines.push(`\t\tSpotWidth       ${f(m.Surface.SpotWidth, 3)}`);
+  lines.push(`\t\tDayAmbient      ${f(m.Surface.DayAmbient, 2)}`);
+  if (m.ModulateColor) lines.push(`\t\tModulateColor  ${m.ModulateColor}`);
+  lines.push(`\t}`);
+  lines.push(``);
+
+  if (m.HasAtmosphere) {
+    lines.push(`\tAtmosphere`);
+    lines.push(`\t{`);
+    lines.push(`\t\tModel          "${m.Atmosphere.Model}"`);
+    lines.push(`\t\tHeight          ${f(m.Atmosphere.Height, 6)}`);
+    lines.push(`\t\tDensity         ${f(m.Atmosphere.Density, 8)}`);
+    lines.push(`\t\tPressure        ${f(m.Atmosphere.Pressure, 8)}`);
+    lines.push(`\t\tGreenhouse      ${f(m.Atmosphere.Greenhouse, 6)}`);
+    lines.push(`\t\tOpacity         ${f(m.Atmosphere.Opacity, 3)}`);
+    lines.push(`\t}`);
+    lines.push(``);
+  } else {
+    lines.push(`\tNoAtmosphere    true`);
+    lines.push(``);
+  }
+
+  if (m.IsAsteroid) {
+    lines.push(`\tNoOcean         true`);
+    lines.push(`\tNoClouds        true`);
+    lines.push(`\tNoLava          true`);
+  } else {
+    if (!m.HasOcean) lines.push(`\tNoOcean         true`);
+    if (!m.HasClouds) lines.push(`\tNoClouds        true`);
+    if (!m.HasLava) lines.push(`\tNoLava          true`);
+  }
+
+  lines.push(``);
+  lines.push(`\tOrbit`);
+  lines.push(`\t{`);
+  lines.push(`\t\tRefPlane        "Equator"`);
+  lines.push(`\t\tPeriodDays      ${f(m.Orbit.PeriodDays, 6)}`);
+  if (m.Orbit.SemiMajorAxisKm != null) lines.push(`\t\tSemiMajorAxisKm ${f(m.Orbit.SemiMajorAxisKm, 3)}`);
+  else lines.push(`\t\tSemiMajorAxis   ${f(m.Orbit.SemiMajorAxis, 6)}`);
+  lines.push(`\t\tEccentricity    ${f(m.Orbit.Eccentricity, 10)}`);
+  lines.push(`\t\tInclination     ${f(m.Orbit.Inclination, 8)}`);
+  lines.push(`\t\tAscendingNode   ${f(m.Orbit.AscendingNode, 8)}`);
+  lines.push(`\t\tArgOfPericenter ${f(m.Orbit.ArgOfPericenter, 6)}`);
+  lines.push(`\t\tMeanAnomaly     ${f(m.Orbit.MeanAnomaly, 6)}`);
+  lines.push(`\t}`);
+  lines.push(`}`);
+  return lines.join("\n");
+}
+
+function asteroidBlock(a) {
+  // Asteroid is still "Moon" blocks in your format, just Class="Asteroid" with AsterType
+  const lines = [];
+  lines.push(`Moon\t"${a.Name}"`);
+  lines.push(`{`);
+  lines.push(`\tParentBody     "${a.ParentBody}"`);
+  lines.push(`\tClass          "Asteroid"`);
+  lines.push(`\tAsterType      "${a.AsterType}"`);
+  lines.push(`\tMass            ${f(a.Mass, 8)}`);
+  lines.push(`\tRadius          ${f(a.Radius, 3)}`);
+  lines.push(`\tInertiaMoment   ${f(a.InertiaMoment, 9)}`);
+  lines.push(`\tOblateness      ${f(a.Oblateness, 9)}`);
+  lines.push(`\tRotationPeriod  ${f(a.RotationPeriod, 5)}`);
+  lines.push(`\tObliquity       ${f(a.Obliquity, 6)}`);
+  lines.push(`\tEqAscendNode    ${f(a.EqAscendNode, 6)}`);
+  lines.push(``);
+  lines.push(`\tAbsMagn         ${f(a.AbsMagn, 1)}`);
+  lines.push(`\tSlopeParam      ${f(a.SlopeParam, 2)}`);
+  lines.push(`\tAlbedo          ${f(a.Albedo, 2)}`);
+  lines.push(`\tBrightness      ${f(a.Brightness, 2)}`);
+  lines.push(`\tBrightnessReal  1`);
+  lines.push(``);
+  lines.push(`\tNoOcean         true`);
+  lines.push(`\tNoClouds        true`);
+  lines.push(`\tNoLava          true`);
+  lines.push(`\tNoAtmosphere    true`);
+  lines.push(``);
+  lines.push(`\tOrbit`);
+  lines.push(`\t{`);
+  lines.push(`\t\tRefPlane        "Equator"`);
+  lines.push(`\t\tPeriodDays      ${f(a.Orbit.PeriodDays, 6)}`);
+  lines.push(`\t\tSemiMajorAxisKm ${f(a.Orbit.SemiMajorAxisKm, 3)}`);
+  lines.push(`\t\tEccentricity    ${f(a.Orbit.Eccentricity, 10)}`);
+  lines.push(`\t\tInclination     ${f(a.Orbit.Inclination, 6)}`);
+  lines.push(`\t\tAscendingNode   ${f(a.Orbit.AscendingNode, 6)}`);
+  lines.push(`\t\tArgOfPericenter ${f(a.Orbit.ArgOfPericenter, 6)}`);
+  lines.push(`\t\tMeanAnomaly     ${f(a.Orbit.MeanAnomaly, 6)}`);
+  lines.push(`\t}`);
+  lines.push(`}`);
+  return lines.join("\n");
+}
+
+/* -------------------- Main generation -------------------- */
+function generateSystem(opts) {
+  const {
+    parentName, planetRadiusKm, planetMassEarth, nMoons, nAst, seedStr,
+    hillMode, starMassSolar, orbAU
+  } = opts;
+
+  const seed = (seedStr && seedStr !== "auto") ? hashStringToU32(seedStr) : (Date.now() >>> 0);
+  const rng = mulberry32(seed);
+
+  const hillKm = (hillMode === "physical")
+    ? hillSphereKmPhysical(orbAU, planetMassEarth, starMassSolar)
+    : hillSphereKmPseudo(planetRadiusKm, planetMassEarth);
+
+  // major moons spaced out
+  const majorAs = generateMajorMoonSemimajors(rng, hillKm, planetRadiusKm, nMoons);
+
+  const majorMoons = majorAs.map((aKm, idx) => {
+    const isTerra = rng() < 0.45; // mix types
+    const arch = isTerra ? archetypeTerraIkernu : archetypeAquariaMalia;
+    const type = arch.Class;
+
+    // Mass fraction for major moons
+    const mf = (type === "Terra")
+      ? randRange(rng, 0.000005, 0.001)  // can get large (Ikernu-like)
+      : randRange(rng, 1e-6, 0.0005);  // smaller icy bodies
+    const mass = planetMassEarth * mf;
+
+    const density = (type === "Terra")
+      ? randRange(rng, 3.0, 5.8)
+      : randRange(rng, 0.9, 2.2);
+    const radiusKm = radiusKmFromMassAndDensity(mass, density);
+
+    const ecc = clamp(randRange(rng, 0.0, 0.08), 0, 0.2);
+    const inc = randRange(rng, -2.5, 2.5);
+    const asc = randRange(rng, -180, 180);
+    const argp = randRange(rng, -180, 180);
+    const M = randRange(rng, -180, 180);
+
+    // rotation: either tidal locked (most) or free
+    const tidalLocked = (rng() < 0.75);
+    const periodDays = periodDaysFromA(aKm, planetMassEarth);
+    const rotationPeriod = tidalLocked ? null : randRange(rng, 0.2, 60);
+
+    // surface variability
+    const surface = makeSurfaceBlock(rng, type);
+
+    // Terra moons sometimes get a thin atmosphere/ocean/clouds (Ikernu-ish), otherwise airless
+    const hasAtm = (type === "Terra") && (rng() < 0.65);
+    const hasOcean = (type === "Terra") && (rng() < 0.55);
+    const hasClouds = (type === "Terra") && (rng() < 0.55);
+    const hasLava = (type === "Terra") && (rng() < 0.25);
+
+    const atm = hasAtm ? {
+      Model: "Earth",
+      Height: randRange(rng, 120, 520),
+      Density: randRange(rng, 1e-12, 2e-9),
+      Pressure: randRange(rng, 1e-9, 2e-6),
+      Greenhouse: randRange(rng, 0, 220),
+      Opacity: randRange(rng, 0.85, 0.995)
+    } : null;
+
+    const modColor = (type === "Terra" && rng() < 0.6)
+      ? vec3(randRange(rng,0.55,0.90), randRange(rng,0.45,0.80), randRange(rng,0.35,0.70))
+      : null;
+
+    return {
+      Name: genName(rng),
+      ParentBody: parentName,
+      Class: type,
+      Mass: mass,
+      Radius: radiusKm,
+      TidalLocked: tidalLocked,
+      RotationPeriod: rotationPeriod,
+      Obliquity: randRange(rng, -30, 30),
+      EqAscendNode: randRange(rng, -180, 180),
+      AlbedoBond: arch.AlbedoBond,
+      AlbedoGeom: arch.AlbedoGeom,
+      SurfacePreset: arch.SurfacePreset,
+      Surface: surface,
+      ModulateColor: modColor,
+      HasAtmosphere: hasAtm,
+      Atmosphere: atm,
+      HasOcean: hasOcean,
+      HasClouds: hasClouds,
+      HasLava: hasLava,
+      Orbit: {
+        PeriodDays: periodDays,
+        SemiMajorAxisKm: aKm,
+        Eccentricity: ecc,
+        Inclination: inc,
+        AscendingNode: asc,
+        ArgOfPericenter: argp,
+        MeanAnomaly: M
+      }
+    };
+  });
+
+  // asteroid swarm closer-in, clustered
+  const astAs = generateAsteroidSemimajors(rng, hillKm, planetRadiusKm, majorAs, nAst);
+  const asteroids = astAs.map(aKm => {
+    const radiusKm = randRange(rng, 0.3, 40.0);
+    // rough mass (very small): assume density 2.5 g/cm^3
+    const density = randRange(rng, 1.8, 3.2);
+    const volumeKm3 = (4/3) * Math.PI * Math.pow(radiusKm, 3);
+    // convert to kg: km^3 -> m^3 (1e9), density g/cm^3 -> kg/m^3 (*1000)
+    const massKg = volumeKm3 * 1e9 * (density * 1000);
+    const M_EARTH_KG = 5.9722e24;
+    const massEarth = massKg / M_EARTH_KG;
+
+    const periodDays = periodDaysFromA(aKm, planetMassEarth);
+
+    return {
+      Name: genName(rng),
+      ParentBody: parentName,
+      IsAsteroid: true,
+      AsterType: pick(rng, ["Amor","Apollo","Aten","Atira","Centaur"]),
+      Mass: massEarth,
+      Radius: radiusKm,
+      InertiaMoment: randRange(rng, 0.37, 0.41),
+      Oblateness: randRange(rng, 0.02, 0.35),
+      RotationPeriod: randRange(rng, 2.0, 18.0),
+      Obliquity: randRange(rng, 0, 360),
+      EqAscendNode: randRange(rng, -180, 180),
+      AbsMagn: randRange(rng, 14.5, 22.5),
+      SlopeParam: randRange(rng, 0.05, 0.25),
+      Albedo: randRange(rng, 0.05, 0.35),
+      Brightness: randRange(rng, 1.2, 3.0),
+      Orbit: {
+        PeriodDays: periodDays,
+        SemiMajorAxisKm: aKm,
+        Eccentricity: clamp(randRange(rng, 0.0, 0.45), 0, 0.9),
+        Inclination: randRange(rng, -4.0, 4.0),
+        AscendingNode: randRange(rng, -180, 180),
+        ArgOfPericenter: randRange(rng, -180, 180),
+        MeanAnomaly: randRange(rng, -180, 180)
+      }
+    };
+  });
+
+  return { seed, hillKm, majorMoons, asteroids };
+}
+
+function renderPreview(sys) {
+  const rows = [];
+  for (const m of sys.majorMoons) {
+    rows.push({
+      Name: m.Name,
+      Type: "Moon",
+      Class: m.Class,
+      Radius_km: m.Radius.toFixed(1),
+      Mass_E: m.Mass.toExponential(3),
+      a_km: m.Orbit.SemiMajorAxisKm.toFixed(0),
+      Period_d: m.Orbit.PeriodDays.toFixed(3)
+    });
+  }
+  for (const a of sys.asteroids) {
+    rows.push({
+      Name: a.Name,
+      Type: "Asteroid",
+      Class: a.AsterType,
+      Radius_km: a.Radius.toFixed(2),
+      Mass_E: a.Mass.toExponential(3),
+      a_km: a.Orbit.SemiMajorAxisKm.toFixed(0),
+      Period_d: a.Orbit.PeriodDays.toFixed(3)
+    });
+  }
+  rows.sort((x,y)=> (Number(x.a_km) - Number(y.a_km)));
+
+  let html = `<div class="muted">Hill sphere used: <span class="pill">${sys.hillKm.toFixed(0)} km</span> &nbsp; Seed: <span class="pill">${sys.seed}</span></div>`;
+  html += `<table style="margin-top:8px;">
+    <thead><tr>
+      <th>Name</th><th>Type</th><th>Class</th><th>Radius (km)</th><th>Mass (Earth)</th><th>a (km)</th><th>Period (days)</th>
+    </tr></thead><tbody>`;
+  for (const r of rows) {
+    html += `<tr>
+      <td>${r.Name}</td>
+      <td>${r.Type}</td>
+      <td>${r.Class}</td>
+      <td>${r.Radius_km}</td>
+      <td>${r.Mass_E}</td>
+      <td>${r.a_km}</td>
+      <td>${r.Period_d}</td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  document.getElementById("preview").innerHTML = html;
+}
+
+function renderConfig(sys) {
+  const blocks = [];
+  // put asteroids first (closer-in), then moons, sorted by a
+  const all = [];
+  for (const a of sys.asteroids) all.push({ kind: "ast", a: a.Orbit.SemiMajorAxisKm, obj: a });
+  for (const m of sys.majorMoons) all.push({ kind: "moon", a: m.Orbit.SemiMajorAxisKm, obj: m });
+  all.sort((x,y)=>x.a - y.a);
+
+  for (const item of all) {
+    blocks.push(item.kind === "ast" ? asteroidBlock(item.obj) : moonBlock(item.obj));
+    blocks.push(""); // blank line between
+  }
+  return blocks.join("\n");
+}
+
+/* -------------------- UI wiring -------------------- */
+let lastOutput = "";
+document.getElementById("genBtn").addEventListener("click", () => {
+  const parentName = document.getElementById("parentName").value.trim() || "Parent";
+  const planetRadiusKm = Number(document.getElementById("planetRadius").value);
+  const planetMassEarth = Number(document.getElementById("planetMass").value);
+  const nMoons = Math.max(0, Math.floor(Number(document.getElementById("nMoons").value)));
+  const nAst = Math.max(0, Math.floor(Number(document.getElementById("nAst").value)));
+  const seedStr = document.getElementById("seed").value.trim();
+  const hillMode = document.getElementById("hillMode").value;
+  const starMassSolar = Number(document.getElementById("starMass").value);
+  const orbAU = Number(document.getElementById("orbAU").value);
+
+  const sys = generateSystem({
+    parentName, planetRadiusKm, planetMassEarth, nMoons, nAst, seedStr, hillMode, starMassSolar, orbAU
+  });
+
+  renderPreview(sys);
+  lastOutput = renderConfig(sys);
+  document.getElementById("out").value = lastOutput;
+
+  const modeLabel = (hillMode === "physical") ? "physical hill sphere" : "pseudo hill sphere";
+  document.getElementById("meta").textContent =
+    `Generated ${sys.majorMoons.length} moons + ${sys.asteroids.length} asteroids using ${modeLabel}.`;
+});
+
+document.getElementById("copyBtn").addEventListener("click", async () => {
+  const text = document.getElementById("out").value;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // fallback
+    const ta = document.getElementById("out");
+    ta.focus(); ta.select();
+    document.execCommand("copy");
+  }
+});
+
+// Auto-generate once
+document.getElementById("genBtn").click();
+</script>
+</body>
+</html>
