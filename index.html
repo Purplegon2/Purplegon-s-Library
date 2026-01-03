@@ -1,74 +1,602 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Purplegon's Library</title>
-    <style>
-        body {
-            font-family: sans-serif;
-            max-width: 800px;
-            margin: 40px auto;
-            line-height: 1.6;
-            color: #222;
-        }
-        h1 {
-            font-weight: 400;
-            border-bottom: 1px solid #ccc;
-            padding-bottom: 8px;
-        }
-        ul {
-            padding-left: 20px;
-        }
-        a {
-            color: #0645ad;
-            text-decoration: none;
-        }
-        a:hover {
-            text-decoration: underline;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Purplegon's Library</title>
+
+  <style>
+    :root{
+      --bg: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --panel: #ffffff;
+      --panel2: #f8fafc;
+      --codebg: #0b1020;
+      --codeborder: rgba(255,255,255,.08);
+      --code: #e6edf3;
+      --accent: #7c3aed;
+      --accent2: #6d28d9;
+      --link: #7c3aed;
+      --shadow: 0 10px 30px rgba(2,6,23,.07);
+      --radius: 16px;
+      --radius2: 12px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(900px 400px at 15% 0%, rgba(124,58,237,.12), rgba(255,255,255,0) 55%),
+        radial-gradient(800px 380px at 85% 10%, rgba(124,58,237,.10), rgba(255,255,255,0) 55%),
+        var(--bg);
+      line-height: 1.55;
+    }
+
+    a{color:var(--link);text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    .wrap{max-width: 1120px; margin: 0 auto; padding: 0 20px;}
+
+    /* Top nav */
+    .topbar{
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255,255,255,.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav{
+      display:flex; align-items:center; justify-content:space-between;
+      height: 62px;
+      gap: 16px;
+    }
+    .brand{
+      display:flex; align-items:center; gap: 12px;
+      min-width: 220px;
+    }
+    .logo{
+      width: 34px; height: 34px; border-radius: 10px;
+      border: 1px solid var(--border);
+      overflow:hidden;
+      background: #fff;
+      display:flex; align-items:center; justify-content:center;
+      box-shadow: 0 6px 14px rgba(2,6,23,.06);
+    }
+    .logo svg{width: 22px; height: 22px}
+    .brand b{font-weight: 800; letter-spacing: .2px}
+    .navlinks{
+      display:flex; align-items:center; gap: 14px;
+      flex-wrap:wrap;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .navlinks a{
+      color: var(--muted);
+      padding: 8px 10px;
+      border-radius: 10px;
+    }
+    .navlinks a:hover{
+      background: rgba(124,58,237,.08);
+      color: var(--accent2);
+      text-decoration:none;
+    }
+    .cta{
+      display:flex; align-items:center; gap: 10px;
+      font-size: 13px;
+    }
+    .btn{
+      border: 1px solid rgba(124,58,237,.25);
+      background: rgba(124,58,237,.10);
+      color: var(--accent2);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn:hover{
+      background: rgba(124,58,237,.14);
+      text-decoration:none;
+    }
+
+    /* Hero */
+    .hero{ padding: 34px 0 16px 0; }
+    .heroGrid{
+      display:grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 940px){
+      .heroGrid{grid-template-columns: 1fr}
+      .brand{min-width:auto}
+    }
+    .headline{
+      font-size: 34px;
+      line-height: 1.15;
+      margin: 0 0 10px 0;
+      letter-spacing: -.02em;
+    }
+    .lede{
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 70ch;
+    }
+    .tagRow{
+      display:flex; flex-wrap:wrap; gap: 10px;
+      margin-top: 16px;
+    }
+    .tag{
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.75);
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .tag b{color: var(--accent2); font-weight: 800}
+
+    .heroCard{
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .heroCardHead{
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(124,58,237,.07), rgba(255,255,255,0));
+      font-weight: 800;
+    }
+    .heroCardBody{
+      padding: 12px 16px 16px 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .miniList{margin: 0; padding-left: 18px}
+    .miniList li{margin: 6px 0}
+
+    /* Layout */
+    .content{ padding: 18px 0 54px 0; }
+    .grid{
+      display:grid;
+      grid-template-columns: 280px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 940px){
+      .grid{grid-template-columns: 1fr}
+    }
+
+    .toc{
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.75);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px;
+      position: sticky;
+      top: 76px;
+    }
+    @media (max-width: 940px){
+      .toc{position: static}
+    }
+    .toc h2{
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .toc a{
+      display:block;
+      padding: 8px 10px;
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      border: 1px solid transparent;
+    }
+    .toc a:hover{
+      background: rgba(124,58,237,.07);
+      border-color: rgba(124,58,237,.18);
+      color: var(--accent2);
+      text-decoration:none;
+    }
+
+    section{
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.88);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    section h2{
+      margin: 0 0 10px 0;
+      font-size: 18px;
+      letter-spacing: -.01em;
+    }
+    p{margin: 10px 0; color: var(--text)}
+    p.muted{color: var(--muted)}
+
+    /* Cards */
+    .cards{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media (max-width: 940px){
+      .cards{grid-template-columns: 1fr}
+    }
+    .card{
+      border: 1px solid var(--border);
+      border-radius: var(--radius2);
+      background: linear-gradient(180deg, rgba(124,58,237,.05), rgba(255,255,255,0));
+      padding: 12px 12px;
+      display:flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 110px;
+    }
+    .cardTop{
+      display:flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    }
+    .card b{display:block}
+    .meta{
+      color: var(--muted);
+      font-size: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.65);
+      padding: 4px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .desc{color: var(--muted); font-size: 13px; margin: 0}
+    .actions{display:flex; gap: 10px; flex-wrap:wrap; margin-top: auto}
+    .pill{
+      display:inline-block;
+      padding: 7px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(124,58,237,.25);
+      background: rgba(124,58,237,.08);
+      color: var(--accent2);
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .pill:hover{background: rgba(124,58,237,.12); text-decoration:none}
+
+    /* Search */
+    .searchRow{
+      display:flex; gap: 10px; flex-wrap:wrap; align-items:center;
+      margin: 10px 0 0 0;
+    }
+    .search{
+      flex: 1;
+      min-width: 220px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,.75);
+      outline: none;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .smallmuted{color: var(--muted); font-size: 12px}
+
+    footer{
+      padding: 22px 0 44px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+  </style>
 </head>
+
 <body>
+  <div class="topbar">
+    <div class="wrap">
+      <div class="nav">
+        <div class="brand">
+          <div class="logo" title="Purplegon">
+            <!-- Inline logo (no external files required) -->
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="2" d="M7 7c2-3 8-3 10 0s-1 7-5 7-7-4-5-7Z"/>
+              <path fill="none" stroke="currentColor" stroke-width="2" d="M6 14c1.5 1.5 3.5 3 6 3s4.5-1.5 6-3"/>
+            </svg>
+          </div>
+          <b>Purplegon's Library</b>
+        </div>
 
-    <h1>Purplegon's Library</h1>
+        <div class="navlinks" aria-label="Primary">
+          <a href="#projects">Projects</a>
+          <a href="#simulations">Simulations</a>
+          <a href="#tools">Tools</a>
+          <a href="#games">Games</a>
+          <a href="#docs">Docs</a>
+        </div>
 
-    <p>Below is a list of projects available to view and run:</p>
+        <div class="cta">
+          <a class="btn" href="#projects">Browse</a>
+        </div>
+      </div>
+    </div>
+  </div>
 
-    <ul>
-        <li><a href="library/cellular-automaton.html">cellular-automaton.html</a></li>
-        <li><a href="library/tacs.html">totally-accurate-chemistry-simulator.html</a></li>
-        <li><a href="library/solar-sandbox.html">solar-sandbox.html</a></li>
-        <li><a href="library/typing.html">wikipedia-typing.html</a></li>
-        <li><a href="library/kifahse-word-generator.html">kifahse-dictionary.html</a></li>
-        <li><a href="https://purplegon2.github.io/Aron-Encyclopedia/#/home">aron-encyclopedia.html</a></li>
-        <li><a href="library/soccer.html">soccer.html</a></li>
-        <li><a href="library/browser.html">browser.html</a></li>
-        <li><a href="library/computadora.html">Atlas25-VM.html</a></li>
-        <li><a href="library/Atlas_Nuclear_Powerstation.html">nuclear-powerplant-sim.html</a></li>
-        <li><a href="library/powder.html">powder.html</a></li>
-        <li><a href="library/image-to-color.html">image-to-color.html</a></li>
-        <li><a href="library/language_model.html">llm-creator.html</a></li>
-        <li><a href="library/file-to-mp4.html">file-to-mp4.html</a></li>
-        <li><a href="library/se-random-moon-generator.html">space-engine-moon-generator.html</a></li>
-        <li><a href="library/nova_documentation.html">nova-documentation.html</a></li>
-    </ul>
+  <div class="wrap">
+    <div class="hero">
+      <div class="heroGrid">
+        <div>
+          <h1 class="headline">A small collection of projects you can run in the browser.</h1>
+          <p class="lede">
+            Pick something from the categories, or search everything at once. Most links are local pages under
+            <code>library/</code>; a few point to external projects.
+          </p>
 
+          <div class="tagRow" role="list">
+            <div class="tag" role="listitem"><b>Type</b>: HTML sandbox projects</div>
+            <div class="tag" role="listitem"><b>Run</b>: click → open</div>
+            <div class="tag" role="listitem"><b>Organized</b>: categories + search</div>
+            <div class="tag" role="listitem"><b>Theme</b>: purple accent</div>
+          </div>
+        </div>
+
+        <div class="heroCard">
+          <div class="heroCardHead">Quick notes</div>
+          <div class="heroCardBody">
+            <ul class="miniList">
+              <li>Use the search box to filter cards instantly.</li>
+              <li>External links open in a new tab.</li>
+              <li>Edit descriptions/categories directly in this file.</li>
+            </ul>
+            <div class="smallmuted" style="margin-top:10px;">
+              Tip: keep filenames stable; update labels freely.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid">
+        <nav class="toc" aria-label="Table of contents">
+          <h2>Contents</h2>
+          <a href="#projects">All projects</a>
+          <a href="#simulations">Simulations</a>
+          <a href="#tools">Tools</a>
+          <a href="#games">Games</a>
+          <a href="#docs">Docs</a>
+        </nav>
+
+        <div>
+          <section id="projects">
+            <h2>All projects</h2>
+            <p class="muted">Search matches title, description, and filename.</p>
+
+            <div class="searchRow">
+              <input id="q" class="search" type="search" placeholder="Search projects (e.g. solar, wiki, vm, chemistry)..." autocomplete="off" />
+              <button id="clear" class="btn" type="button">Clear</button>
+            </div>
+            <div class="smallmuted" style="margin-top:10px;">
+              Showing <span id="shownCount">0</span> of <span id="totalCount">0</span>
+            </div>
+
+            <div class="cards" id="allCards">
+              <!-- Simulations -->
+              <div class="card" data-cat="simulations" data-keywords="cellular automaton ca grid life">
+                <div class="cardTop"><b>Cellular Automaton</b><span class="meta">Simulation</span></div>
+                <p class="desc">Grid-based automaton sandbox.</p>
+                <div class="actions"><a class="pill" href="library/cellular-automaton.html">Open</a></div>
+                <div class="smallmuted">library/cellular-automaton.html</div>
+              </div>
+
+              <div class="card" data-cat="simulations" data-keywords="chemistry simulator tacs reactions">
+                <div class="cardTop"><b>Totally Accurate Chemistry Simulator</b><span class="meta">Simulation</span></div>
+                <p class="desc">Chemistry playground / reaction sandbox.</p>
+                <div class="actions"><a class="pill" href="library/tacs.html">Open</a></div>
+                <div class="smallmuted">library/tacs.html</div>
+              </div>
+
+              <div class="card" data-cat="simulations" data-keywords="solar system planets orbit gravity">
+                <div class="cardTop"><b>Solar Sandbox</b><span class="meta">Simulation</span></div>
+                <p class="desc">Orbital / gravity sandbox.</p>
+                <div class="actions"><a class="pill" href="library/solar-sandbox.html">Open</a></div>
+                <div class="smallmuted">library/solar-sandbox.html</div>
+              </div>
+
+              <div class="card" data-cat="simulations" data-keywords="nuclear powerplant sim reactor">
+                <div class="cardTop"><b>Nuclear Powerplant Sim</b><span class="meta">Simulation</span></div>
+                <p class="desc">Power station simulator.</p>
+                <div class="actions"><a class="pill" href="library/Atlas_Nuclear_Powerstation.html">Open</a></div>
+                <div class="smallmuted">library/Atlas_Nuclear_Powerstation.html</div>
+              </div>
+
+              <div class="card" data-cat="simulations" data-keywords="powder sandbox particles">
+                <div class="cardTop"><b>Powder</b><span class="meta">Simulation</span></div>
+                <p class="desc">Particle-style sandbox.</p>
+                <div class="actions"><a class="pill" href="library/powder.html">Open</a></div>
+                <div class="smallmuted">library/powder.html</div>
+              </div>
+
+              <div class="card" data-cat="simulations" data-keywords="moon generator space engine terrain">
+                <div class="cardTop"><b>Space Engine Moon Generator</b><span class="meta">Simulation</span></div>
+                <p class="desc">Procedural moon generator.</p>
+                <div class="actions"><a class="pill" href="library/se-random-moon-generator.html">Open</a></div>
+                <div class="smallmuted">library/se-random-moon-generator.html</div>
+              </div>
+
+              <!-- Tools -->
+              <div class="card" data-cat="tools" data-keywords="typing wikipedia speed">
+                <div class="cardTop"><b>Wikipedia Typing</b><span class="meta">Tool</span></div>
+                <p class="desc">Typing practice using Wikipedia text.</p>
+                <div class="actions"><a class="pill" href="library/typing.html">Open</a></div>
+                <div class="smallmuted">library/typing.html</div>
+              </div>
+
+              <div class="card" data-cat="tools" data-keywords="kifahse dictionary word generator language">
+                <div class="cardTop"><b>Kifahse Dictionary</b><span class="meta">Tool</span></div>
+                <p class="desc">Word/dictionary generator tool.</p>
+                <div class="actions"><a class="pill" href="library/kifahse-word-generator.html">Open</a></div>
+                <div class="smallmuted">library/kifahse-word-generator.html</div>
+              </div>
+
+              <div class="card" data-cat="tools" data-keywords="browser web sandbox">
+                <div class="cardTop"><b>Browser</b><span class="meta">Tool</span></div>
+                <p class="desc">Browser-like experiment page.</p>
+                <div class="actions"><a class="pill" href="library/browser.html">Open</a></div>
+                <div class="smallmuted">library/browser.html</div>
+              </div>
+
+              <div class="card" data-cat="tools" data-keywords="vm computadora atlas25">
+                <div class="cardTop"><b>Atlas25 VM</b><span class="meta">Tool</span></div>
+                <p class="desc">Virtual machine / computer project.</p>
+                <div class="actions"><a class="pill" href="library/computadora.html">Open</a></div>
+                <div class="smallmuted">library/computadora.html</div>
+              </div>
+
+              <div class="card" data-cat="tools" data-keywords="image color palette extract">
+                <div class="cardTop"><b>Image to Color</b><span class="meta">Tool</span></div>
+                <p class="desc">Convert an image into a color/palette output.</p>
+                <div class="actions"><a class="pill" href="library/image-to-color.html">Open</a></div>
+                <div class="smallmuted">library/image-to-color.html</div>
+              </div>
+
+              <div class="card" data-cat="tools" data-keywords="llm creator language model">
+                <div class="cardTop"><b>LLM Creator</b><span class="meta">Tool</span></div>
+                <p class="desc">Toy language model creator/experiment.</p>
+                <div class="actions"><a class="pill" href="library/language_model.html">Open</a></div>
+                <div class="smallmuted">library/language_model.html</div>
+              </div>
+
+              <div class="card" data-cat="tools" data-keywords="mp4 convert file video">
+                <div class="cardTop"><b>File to MP4</b><span class="meta">Tool</span></div>
+                <p class="desc">Convert/export file content to MP4 (project sandbox).</p>
+                <div class="actions"><a class="pill" href="library/file-to-mp4.html">Open</a></div>
+                <div class="smallmuted">library/file-to-mp4.html</div>
+              </div>
+
+              <!-- Games -->
+              <div class="card" data-cat="games" data-keywords="soccer game">
+                <div class="cardTop"><b>Soccer</b><span class="meta">Game</span></div>
+                <p class="desc">Soccer mini-game.</p>
+                <div class="actions"><a class="pill" href="library/soccer.html">Open</a></div>
+                <div class="smallmuted">library/soccer.html</div>
+              </div>
+
+              <!-- Docs -->
+              <div class="card" data-cat="docs" data-keywords="nova documentation language">
+                <div class="cardTop"><b>Nova Documentation</b><span class="meta">Docs</span></div>
+                <p class="desc">Documentation / spec notes for Nova.</p>
+                <div class="actions"><a class="pill" href="library/nova_documentation.html">Open</a></div>
+                <div class="smallmuted">library/nova_documentation.html</div>
+              </div>
+
+              <div class="card" data-cat="docs" data-keywords="aron encyclopedia external">
+                <div class="cardTop"><b>Aron Encyclopedia</b><span class="meta">Docs</span></div>
+                <p class="desc">External encyclopedia site.</p>
+                <div class="actions"><a class="pill" href="https://purplegon2.github.io/Aron-Encyclopedia/#/home" target="_blank" rel="noopener">Open</a></div>
+                <div class="smallmuted">purplegon2.github.io/Aron-Encyclopedia</div>
+              </div>
+            </div>
+          </section>
+
+          <section id="simulations">
+            <h2>Simulations</h2>
+            <p class="muted">Filtered view: Simulation category.</p>
+            <div class="cards" id="simCards"></div>
+          </section>
+
+          <section id="tools">
+            <h2>Tools</h2>
+            <p class="muted">Filtered view: Tools category.</p>
+            <div class="cards" id="toolCards"></div>
+          </section>
+
+          <section id="games">
+            <h2>Games</h2>
+            <p class="muted">Filtered view: Games category.</p>
+            <div class="cards" id="gameCards"></div>
+          </section>
+
+          <section id="docs">
+            <h2>Docs</h2>
+            <p class="muted">Filtered view: Documentation category.</p>
+            <div class="cards" id="docCards"></div>
+          </section>
+
+          <footer>
+            Purplegon's Library — static index page.
+          </footer>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const q = document.getElementById("q");
+      const clear = document.getElementById("clear");
+      const allCardsWrap = document.getElementById("allCards");
+      const cards = Array.from(allCardsWrap.querySelectorAll(".card"));
+
+      const shownCount = document.getElementById("shownCount");
+      const totalCount = document.getElementById("totalCount");
+      totalCount.textContent = String(cards.length);
+
+      function normalize(s){ return (s || "").toLowerCase().trim(); }
+
+      function applyFilter() {
+        const needle = normalize(q.value);
+        let shown = 0;
+
+        for (const card of cards) {
+          const hay = normalize(
+            card.textContent + " " +
+            card.getAttribute("data-keywords") + " " +
+            card.getAttribute("data-cat")
+          );
+          const ok = needle === "" || hay.includes(needle);
+          card.style.display = ok ? "" : "none";
+          if (ok) shown++;
+        }
+
+        shownCount.textContent = String(shown);
+        rebuildCategorySections();
+      }
+
+      function rebuildCategorySections() {
+        const buckets = {
+          simulations: document.getElementById("simCards"),
+          tools: document.getElementById("toolCards"),
+          games: document.getElementById("gameCards"),
+          docs: document.getElementById("docCards"),
+        };
+
+        // clear
+        Object.values(buckets).forEach(el => el.innerHTML = "");
+
+        // clone only visible cards into each category section
+        for (const card of cards) {
+          if (card.style.display === "none") continue;
+          const cat = card.getAttribute("data-cat");
+          const dest = buckets[cat];
+          if (!dest) continue;
+          dest.appendChild(card.cloneNode(true));
+        }
+      }
+
+      q.addEventListener("input", applyFilter);
+      clear.addEventListener("click", () => { q.value = ""; applyFilter(); });
+
+      // initial render
+      applyFilter();
+    })();
+  </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
