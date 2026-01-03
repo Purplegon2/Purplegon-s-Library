@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nova Documentation — Differences vs JavaScript & TypeScript</title>
+  <style>
+    :root{
+      --bg: #ffffff;
+      --text: #0f172a;          /* slate-900 */
+      --muted: #475569;         /* slate-600 */
+      --border: #e2e8f0;        /* slate-200 */
+      --panel: #ffffff;
+      --panel2: #f8fafc;        /* slate-50 */
+      --codebg: #0b1020;        /* deep navy */
+      --codeborder: rgba(255,255,255,.08);
+      --code: #e6edf3;
+      --accent: #7c3aed;        /* purple-600 */
+      --accent2: #6d28d9;       /* purple-700 */
+      --link: #7c3aed;
+      --shadow: 0 10px 30px rgba(2,6,23,.07);
+      --radius: 16px;
+      --radius2: 12px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(900px 400px at 15% 0%, rgba(124,58,237,.12), rgba(255,255,255,0) 55%),
+        radial-gradient(800px 380px at 85% 10%, rgba(124,58,237,.10), rgba(255,255,255,0) 55%),
+        var(--bg);
+      line-height: 1.55;
+    }
+
+    a{color:var(--link);text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    /* Top nav (TypeScript-like) */
+    .topbar{
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255,255,255,.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .wrap{max-width: 1120px; margin: 0 auto; padding: 0 20px;}
+    .nav{
+      display:flex; align-items:center; justify-content:space-between;
+      height: 62px;
+      gap: 16px;
+    }
+    .brand{
+      display:flex; align-items:center; gap: 12px;
+      min-width: 220px;
+    }
+    .logo{
+      width: 34px; height: 34px; border-radius: 10px;
+      border: 1px solid var(--border);
+      overflow:hidden;
+      background: #fff;
+      display:flex; align-items:center; justify-content:center;
+      box-shadow: 0 6px 14px rgba(2,6,23,.06);
+    }
+    .logo img{width:100%; height:100%; object-fit:cover}
+    .brand b{font-weight: 700; letter-spacing: .2px}
+    .navlinks{
+      display:flex; align-items:center; gap: 14px;
+      flex-wrap:wrap;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .navlinks a{
+      color: var(--muted);
+      padding: 8px 10px;
+      border-radius: 10px;
+    }
+    .navlinks a:hover{
+      background: rgba(124,58,237,.08);
+      color: var(--accent2);
+      text-decoration:none;
+    }
+    .cta{
+      display:flex; align-items:center; gap: 10px;
+      font-size: 13px;
+    }
+    .btn{
+      border: 1px solid rgba(124,58,237,.25);
+      background: rgba(124,58,237,.10);
+      color: var(--accent2);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+    .btn:hover{
+      background: rgba(124,58,237,.14);
+      text-decoration:none;
+    }
+
+    /* Hero */
+    .hero{
+      padding: 34px 0 16px 0;
+    }
+    .heroGrid{
+      display:grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 940px){
+      .heroGrid{grid-template-columns: 1fr}
+      .brand{min-width:auto}
+    }
+
+    .headline{
+      font-size: 34px;
+      line-height: 1.15;
+      margin: 0 0 10px 0;
+      letter-spacing: -.02em;
+    }
+    .lede{
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 70ch;
+    }
+    .tagRow{
+      display:flex; flex-wrap:wrap; gap: 10px;
+      margin-top: 16px;
+    }
+    .tag{
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.75);
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .tag b{color: var(--accent2); font-weight: 700}
+
+    .heroCard{
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .heroCardHead{
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(124,58,237,.07), rgba(255,255,255,0));
+      font-weight: 700;
+    }
+    .heroCardBody{
+      padding: 12px 16px 16px 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .miniList{margin: 0; padding-left: 18px}
+    .miniList li{margin: 6px 0}
+
+    /* Layout */
+    .content{
+      padding: 18px 0 54px 0;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 280px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 940px){
+      .grid{grid-template-columns: 1fr}
+    }
+
+    .toc{
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.75);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px;
+      position: sticky;
+      top: 76px;
+    }
+    @media (max-width: 940px){
+      .toc{position: static}
+    }
+    .toc h2{
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .toc a{
+      display:block;
+      padding: 8px 10px;
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      border: 1px solid transparent;
+    }
+    .toc a:hover{
+      background: rgba(124,58,237,.07);
+      border-color: rgba(124,58,237,.18);
+      color: var(--accent2);
+      text-decoration:none;
+    }
+
+    section{
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.88);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    section h2{
+      margin: 0 0 10px 0;
+      font-size: 18px;
+      letter-spacing: -.01em;
+    }
+    section h3{
+      margin: 14px 0 8px 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    p{margin: 10px 0; color: var(--text)}
+    p.muted{color: var(--muted)}
+    ul{margin: 8px 0 0 18px}
+    li{margin: 6px 0}
+
+    /* Cards */
+    .cards{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media (max-width: 940px){
+      .cards{grid-template-columns: 1fr}
+    }
+    .card{
+      border: 1px solid var(--border);
+      border-radius: var(--radius2);
+      background: linear-gradient(180deg, rgba(124,58,237,.05), rgba(255,255,255,0));
+      padding: 12px 12px;
+    }
+    .card b{display:block; margin-bottom: 6px}
+    .card span{color: var(--muted); font-size: 13px}
+
+    /* Tables */
+    table{
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow:hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius2);
+      margin: 12px 0;
+      background: #fff;
+    }
+    th, td{
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      font-size: 13px;
+    }
+    th{
+      background: var(--panel2);
+      color: var(--muted);
+      text-align:left;
+      font-weight: 700;
+    }
+    tr:last-child td{border-bottom:none}
+
+    /* Code */
+    pre{
+      margin: 12px 0;
+      padding: 14px 14px;
+      border-radius: var(--radius2);
+      background: var(--codebg);
+      color: var(--code);
+      border: 1px solid var(--codeborder);
+      overflow:auto;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.45;
+      box-shadow: 0 14px 28px rgba(2,6,23,.18);
+    }
+    code{font-family: var(--mono)}
+    .k{color: #c084fc} /* purple-300 */
+    .t{color: #7dd3fc} /* sky-300 */
+
+    .callout{
+      border-left: 4px solid var(--accent);
+      background: rgba(124,58,237,.06);
+      border-radius: var(--radius2);
+      padding: 10px 12px;
+      color: var(--text);
+      margin: 12px 0;
+    }
+    .callout b{color: var(--accent2)}
+
+    footer{
+      padding: 22px 0 44px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .smallmuted{color:var(--muted); font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="wrap">
+      <div class="nav">
+        <div class="brand">
+          <div class="logo" title="Nova logo">
+            <img src="./graphics/icon.png" alt="Nova logo (./graphics/icon.png)" />
+          </div>
+          <b>Nova</b>
+        </div>
+
+        <div class="navlinks" aria-label="Primary">
+          <a href="#syntax">Syntax</a>
+          <a href="#typing">Typing</a>
+          <a href="#controlflow">Control flow</a>
+          <a href="#classes">OOP</a>
+          <a href="#web">Web pages</a>
+          <a href="#compile">Outputs</a>
+          <a href="#compat">Interop</a>
+        </div>
+
+        <div class="cta">
+          <a class="btn" href="#web">Built-in Markup</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="hero">
+      <div class="heroGrid">
+        <div>
+          <h1 class="headline">Nova is JavaScript with stricter rules and built-in pages.</h1>
+          <p class="lede">
+            Nova compiles to JavaScript, but removes common JS foot-guns by default, simplifies control flow syntax,
+            and provides a <code>page</code> + <code>html { … }</code> system that compiles to DOM-builder JavaScript.
+          </p>
+
+          <div class="tagRow" role="list">
+            <div class="tag" role="listitem"><b>Target</b>: ES Modules</div>
+            <div class="tag" role="listitem"><b>Web</b>: index.html + app.js</div>
+            <div class="tag" role="listitem"><b>Markup</b>: html { … } → DOM</div>
+            <div class="tag" role="listitem"><b>Typing</b>: strict by default</div>
+          </div>
+        </div>
+
+        <div class="heroCard">
+          <div class="heroCardHead">Nova v0 goals</div>
+          <div class="heroCardBody">
+            <ul class="miniList">
+              <li>No required parentheses in <code>if</code>.</li>
+              <li><code>elif</code> + <code>and/or</code> aliases.</li>
+              <li><code>if</code> as an expression.</li>
+              <li>Strict equality and no implicit coercion.</li>
+              <li>Pages compile to DOM builder + small runtime.</li>
+            </ul>
+            <div class="smallmuted" style="margin-top:10px;">
+              Logo: <code>./graphics/icon.png</code> (960×960)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid">
+        <nav class="toc" aria-label="Table of contents">
+          <h2>Contents</h2>
+          <a href="#summary">Summary</a>
+          <a href="#syntax">Syntax differences</a>
+          <a href="#typing">Typing & coercion</a>
+          <a href="#controlflow">Control flow</a>
+          <a href="#classes">Classes & OOP</a>
+          <a href="#modules">Modules</a>
+          <a href="#web">Built-in web pages</a>
+          <a href="#std">Standard library</a>
+          <a href="#compile">Compiler outputs</a>
+          <a href="#compat">JavaScript interop</a>
+        </nav>
+
+        <div>
+          <section id="summary">
+            <h2>Summary</h2>
+            <div class="cards">
+              <div class="card">
+                <b>JS familiarity</b>
+                <span>Same runtime and ecosystem. Output runs anywhere JavaScript runs.</span>
+              </div>
+              <div class="card">
+                <b>TS-like safety</b>
+                <span>Static types + strict rules. No coercion surprises by default.</span>
+              </div>
+              <div class="card">
+                <b>Simpler syntax</b>
+                <span><code>if</code> without parentheses, plus <code>elif</code> and <code>and/or</code>.</span>
+              </div>
+              <div class="card">
+                <b>Web built-in</b>
+                <span><code>page</code> + <code>html { … }</code> templates compile to DOM builder code.</span>
+              </div>
+            </div>
+
+            <div class="callout">
+              <b>Design target:</b> keep the language small and predictable, with most power coming from compile-time checks
+              and a tiny runtime for pages.
+            </div>
+          </section>
+
+          <section id="syntax">
+            <h2>Syntax differences vs JavaScript</h2>
+
+            <table>
+              <thead>
+                <tr><th>Area</th><th>Nova</th><th>JavaScript</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>If condition</td>
+                  <td><code>if x + y == 3 { ... }</code></td>
+                  <td><code>if (x + y === 3) { ... }</code></td>
+                </tr>
+                <tr>
+                  <td>Else-if</td>
+                  <td><code>elif</code> (optional alias <code>else if</code>)</td>
+                  <td><code>else if</code></td>
+                </tr>
+                <tr>
+                  <td>Logical ops</td>
+                  <td><code>and</code>/<code>or</code> aliases (also accepts <code>&amp;&amp;</code>/<code>||</code>)</td>
+                  <td><code>&amp;&amp;</code>/<code>||</code></td>
+                </tr>
+                <tr>
+                  <td>Equality</td>
+                  <td><code>==</code> means strict (→ <code>===</code>), <code>!=</code> → <code>!==</code></td>
+                  <td><code>==</code>/<code>!=</code> are coercing</td>
+                </tr>
+                <tr>
+                  <td>Strings</td>
+                  <td>Recommended: <code>..</code> for concat; <code>+</code> numeric-only</td>
+                  <td><code>+</code> concatenates and coerces</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <pre><code><span class="k">// Nova</span>
+if a &lt; b and c &gt; d {
+  ...
+} elif a == 10 or b == 20 {
+  ...
+} else {
+  ...
+}
+
+<span class="k">// Typical JS output</span>
+if ((a &lt; b) &amp;&amp; (c &gt; d)) {
+  ...
+} else if ((a === 10) || (b === 20)) {
+  ...
+} else {
+  ...
+}</code></pre>
+          </section>
+
+          <section id="typing">
+            <h2>Typing & coercion differences vs TypeScript and JavaScript</h2>
+
+            <p class="muted">
+              Nova aims for “TypeScript-level static safety” plus stricter runtime behavior by preventing implicit coercion.
+              These guarantees come from the Nova compiler (like TypeScript); generated JS still runs on the JS runtime.
+            </p>
+
+            <h3>Type checking</h3>
+            <ul>
+              <li><b>No implicit <code>any</code>:</b> if a value cannot be typed, it’s a compile error (or requires an explicit escape hatch).</li>
+              <li><b>Inference is allowed:</b> but inferred types must stay consistent.</li>
+              <li><b>Nullability is explicit:</b> use <code>T?</code> for nullable types (recommended for v0).</li>
+            </ul>
+
+            <h3>Coercion rules</h3>
+            <ul>
+              <li><b>Bool-only conditions:</b> <code>if</code> conditions must be <code>bool</code>.</li>
+              <li><b>Strict equality:</b> <code>==</code> behaves like <code>===</code>; <code>!=</code> like <code>!==</code>.</li>
+              <li><b>No string/number mixing:</b> use <code>..</code> or explicit conversions.</li>
+              <li><b>Explicit conversions:</b> <code>toInt</code>, <code>toNum</code>, <code>toStr</code> (library-defined behavior).</li>
+            </ul>
+
+            <pre><code><span class="k">// Nova (recommended)</span>
+let n = 1 + 2        <span class="t">// ok</span>
+let s = "a" .. "b"   <span class="t">// ok</span>
+let bad = "x" + 2    <span class="t">// error</span>
+
+<span class="k">// Nova: bool-only conditions</span>
+let name = ""
+if name { ... }      <span class="t">// error</span>
+if name != "" { ... } <span class="t">// ok</span></code></pre>
+          </section>
+
+          <section id="controlflow">
+            <h2>Control flow</h2>
+
+            <h3>If as an expression</h3>
+            <pre><code><span class="k">// Nova</span>
+let x =
+  if a &lt; b: 1
+  elif a + b == c: 2
+  else: 3
+
+<span class="k">// Typical JS output (IIFE form)</span>
+const x = (() =&gt; {
+  if (a &lt; b) return 1;
+  else if (a + b === c) return 2;
+  else return 3;
+})();</code></pre>
+
+            <div class="callout">
+              <b>Why IIFE output?</b> It avoids nested JS ternaries while keeping expression semantics.
+            </div>
+          </section>
+
+          <section id="classes">
+            <h2>Classes & object orientation</h2>
+
+            <h3><code>.new</code> syntax sugar</h3>
+            <pre><code><span class="k">// Nova</span>
+class Vec2 {
+  let x: number
+  let y: number
+
+  new(x: number, y: number) {
+    this.x = x
+    this.y = y
+  }
+
+  add(v: Vec2) -&gt; Vec2 {
+    return Vec2.new(this.x + v.x, this.y + v.y)
+  }
+}
+
+let p = Vec2.new(1, 2)
+
+<span class="k">// Typical JS output</span>
+class Vec2 {
+  constructor(x, y) { this.x = x; this.y = y; }
+  add(v) { return new Vec2(this.x + v.x, this.y + v.y); }
+}
+const p = new Vec2(1, 2);</code></pre>
+
+            <p class="muted">
+              Optional compile-time convenience: implicit <code>this.</code> for known fields inside class methods.
+            </p>
+          </section>
+
+          <section id="modules">
+            <h2>Modules</h2>
+            <ul>
+              <li>Nova compiles to ES Modules by default (<code>import</code>/<code>export</code>).</li>
+              <li>Imports can reference <code>.nova</code> sources and resolve to generated <code>.js</code> outputs.</li>
+              <li>Compiler may optionally bundle to a single JS file for browsers.</li>
+            </ul>
+
+            <pre><code><span class="k">// Nova</span>
+import { Vec2 } from "./vec2.nova"
+export func main() { ... }
+
+<span class="k">// JS output</span>
+import { Vec2 } from "./vec2.js";
+export function main() { ... }</code></pre>
+          </section>
+
+          <section id="web">
+            <h2>Built-in web pages (Option 1 + Option A)</h2>
+
+            <p class="muted">
+              Nova adds <code>page</code> definitions plus <code>html { ... }</code> template blocks.
+              A <code>page</code> compiles to a function returning a DOM node (or fragment).
+            </p>
+
+            <h3>Rules</h3>
+            <ul>
+              <li><b><code>page Name()</code>:</b> declares a render function.</li>
+              <li><b><code>html { ... }</code>:</b> HTML-like markup only (no doctype, no <code>&lt;script&gt;</code> inside).</li>
+              <li><b><code>{expr}</code> interpolation:</b> inject Nova expressions into text/attributes.</li>
+              <li><b>Event binding:</b> <code>onclick={handler}</code>, <code>oninput={handler}</code>, etc.</li>
+              <li><b>Scope:</b> markup can reference symbols in surrounding Nova scope.</li>
+            </ul>
+
+            <h3>Example</h3>
+            <pre><code><span class="k">// Nova</span>
+page home() {
+  let title = "Nova"
+  func clickMe() { print("clicked") }
+
+  html {
+    &lt;div class="panel"&gt;
+      &lt;h1&gt;{title}&lt;/h1&gt;
+      &lt;button onclick={clickMe}&gt;Click&lt;/button&gt;
+    &lt;/div&gt;
+  }
+}</code></pre>
+
+            <h3>Mounting</h3>
+            <pre><code><span class="k">// Nova</span>
+run home
+
+<span class="k">// Desugars to</span>
+mount(home(), "#app")</code></pre>
+
+            <h3>Compilation model (DOM builder)</h3>
+            <p class="muted">
+              Templates compile into <code>document.createElement</code> calls, safe text assignment, attribute setting,
+              and <code>addEventListener</code> for events.
+            </p>
+
+            <pre><code><span class="k">// Typical JS output (simplified)</span>
+export function home() {
+  const root = document.createElement("div");
+  root.className = "panel";
+
+  const h1 = document.createElement("h1");
+  h1.textContent = title;
+  root.appendChild(h1);
+
+  const btn = document.createElement("button");
+  btn.textContent = "Click";
+  btn.addEventListener("click", clickMe);
+  root.appendChild(btn);
+
+  return root;
+}</code></pre>
+
+            <h3>State (minimal v0 runtime)</h3>
+            <p class="muted">
+              v0 can ship a small runtime: <code>state()</code> + full-page re-render on change (simple and correct),
+              then later optimize with patching/diffing.
+            </p>
+
+            <pre><code><span class="k">// Nova</span>
+page home() {
+  let count = state(0)
+  func inc() { count += 1 }
+
+  html {
+    &lt;div&gt;
+      &lt;div&gt;Count: {count}&lt;/div&gt;
+      &lt;button onclick={inc}&gt;+&lt;/button&gt;
+    &lt;/div&gt;
+  }
+}</code></pre>
+          </section>
+
+          <section id="std">
+            <h2>Standard library differences</h2>
+            <ul>
+              <li><b>Explicit conversions:</b> <code>toInt</code>, <code>toNum</code>, <code>toStr</code>.</li>
+              <li><b>Logging:</b> <code>print()</code> compiles to <code>console.log</code> for browser targets.</li>
+              <li><b>Web runtime:</b> <code>mount(node, selector)</code>, <code>run PageName</code>, <code>state(value)</code>.</li>
+            </ul>
+          </section>
+
+          <section id="compile">
+            <h2>Compiler outputs</h2>
+            <table>
+              <thead><tr><th>Mode</th><th>Output</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>Web app (default)</td>
+                  <td><code>index.html</code> + <code>app.js</code></td>
+                  <td><code>index.html</code> has <code>&lt;div id="app"&gt;&lt;/div&gt;</code> and loads <code>app.js</code> (module).</td>
+                </tr>
+                <tr>
+                  <td>Single file</td>
+                  <td><code>index.html</code> (inline JS)</td>
+                  <td>Compiler inlines runtime + compiled pages (useful for sharing).</td>
+                </tr>
+                <tr>
+                  <td>Library</td>
+                  <td><code>*.js</code> ES modules</td>
+                  <td>No HTML emitted; consumer mounts pages manually.</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h3>Minimal generated <code>index.html</code></h3>
+            <pre><code>&lt;div id="app"&gt;&lt;/div&gt;
+&lt;script type="module" src="./app.js"&gt;&lt;/script&gt;</code></pre>
+          </section>
+
+          <section id="compat">
+            <h2>JavaScript interoperability</h2>
+            <ul>
+              <li>Nova can import JS modules directly.</li>
+              <li>JS interop boundaries can require explicit typing (<code>extern</code>) to keep safety guarantees.</li>
+              <li>All Web APIs remain available (fetch, canvas, WebAudio, etc.).</li>
+            </ul>
+
+            <div class="callout">
+              <b>Note:</b> Imported JS can still behave like JS. Nova’s “no coercion” rules apply to Nova code at compile-time.
+            </div>
+          </section>
+
+          <footer>
+            Nova Documentation (v0 draft). Logo path: <code>./graphics/icon.png</code>.
+          </footer>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
