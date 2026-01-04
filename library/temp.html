@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Heightmask + Layered Noise Painter</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .row { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+    .panel { border: 1px solid #333; border-radius: 10px; padding: 12px; background: #111; }
+    label { display:block; font-size: 12px; opacity: .9; margin-top: 10px; }
+    input[type="range"] { width: 100%; }
+    input[type="number"], input[type="text"] { width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid #333; background: #0b0b0b; color: #eee; }
+    input[type="file"] { width: 100%; }
+    .btns { display:flex; gap:10px; margin-top: 12px; flex-wrap: wrap; }
+    button {
+      padding: 8px 10px; border-radius: 10px; border: 1px solid #333;
+      background: #1a1a1a; color: #eee; cursor: pointer;
+    }
+    button:hover { filter: brightness(1.1); }
+    canvas { width: 100%; height: auto; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; }
+    .hint { font-size: 12px; opacity: .8; margin-top: 8px; line-height: 1.35; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <div class="panel">
+      <label>Input image (black or transparent treated as water)</label>
+      <input id="file" type="file" accept="image/*" />
+
+      <div class="grid2">
+        <div>
+          <label>Water detect threshold (0–64)</label>
+          <input id="waterThresh" type="range" min="0" max="64" value="10" />
+          <div class="hint mono" id="waterThreshVal"></div>
+        </div>
+        <div>
+          <label>Water color</label>
+          <input id="waterColor" type="text" value="#00006a" />
+        </div>
+      </div>
+
+      <label>Palette (high / mid / low)</label>
+      <div class="grid2">
+        <input id="colHigh" type="text" value="#f5f5c8" />
+        <input id="colMid"  type="text" value="#e4d3a8" />
+        <input id="colLow"  type="text" value="#bed791" />
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Blend amount (transition width)</label>
+          <input id="blend" type="range" min="0" max="1" step="0.001" value="0.18" />
+          <div class="hint mono" id="blendVal"></div>
+        </div>
+        <div>
+          <label>Midline (low↔mid split)</label>
+          <input id="midSplit" type="range" min="0" max="1" step="0.001" value="0.45" />
+          <div class="hint mono" id="midSplitVal"></div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Highline (mid↔high split)</label>
+          <input id="highSplit" type="range" min="0" max="1" step="0.001" value="0.70" />
+          <div class="hint mono" id="highSplitVal"></div>
+        </div>
+        <div>
+          <label>Noise strength (0–1)</label>
+          <input id="noiseAmt" type="range" min="0" max="1" step="0.001" value="0.40" />
+          <div class="hint mono" id="noiseAmtVal"></div>
+        </div>
+      </div>
+
+      <label>Layered noise settings</label>
+      <div class="grid2">
+        <div>
+          <label>Scale (bigger = smoother)</label>
+          <input id="scale" type="number" value="110" min="1" step="1" />
+        </div>
+        <div>
+          <label>Octaves</label>
+          <input id="octaves" type="number" value="5" min="1" max="10" step="1" />
+        </div>
+        <div>
+          <label>Persistence</label>
+          <input id="persistence" type="number" value="0.52" min="0" max="1" step="0.01" />
+        </div>
+        <div>
+          <label>Lacunarity</label>
+          <input id="lacunarity" type="number" value="2.05" min="1" max="6" step="0.01" />
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Seed</label>
+          <input id="seed" type="number" value="1337" step="1" />
+        </div>
+        <div>
+          <label>Noise domain warp</label>
+          <input id="warp" type="range" min="0" max="2" step="0.001" value="0.35" />
+          <div class="hint mono" id="warpVal"></div>
+        </div>
+      </div>
+
+      <label>Export size</label>
+      <div class="grid2">
+        <div>
+          <label>Width (px)</label>
+          <input id="outW" type="number" value="1024" min="1" step="1" />
+        </div>
+        <div>
+          <label>Height (px)</label>
+          <input id="outH" type="number" value="1024" min="1" step="1" />
+        </div>
+      </div>
+
+      <div class="btns">
+        <button id="renderBtn">Render</button>
+        <button id="fitBtn">Set export size to input</button>
+        <button id="randSeedBtn">Randomize seed</button>
+        <button id="downloadBtn">Download PNG</button>
+      </div>
+
+      <div class="hint">
+        Notes:
+        <ul>
+          <li>Water = pixel is transparent OR near-black (threshold above).</li>
+          <li>Land = your 3-color palette, blended using split lines + blend amount.</li>
+          <li>Noise is layered (fBm) and can be warped for more organic patterns.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel">
+      <canvas id="canvas" width="1024" height="1024"></canvas>
+      <div class="hint mono" id="status"></div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---------- Utilities ----------
+  const $ = (id) => document.getElementById(id);
+
+  function clamp01(x){ return x < 0 ? 0 : (x > 1 ? 1 : x); }
+  function lerp(a,b,t){ return a + (b-a)*t; }
+  function smoothstep(edge0, edge1, x){
+    const t = clamp01((x-edge0)/(edge1-edge0));
+    return t*t*(3 - 2*t);
+  }
+
+  function parseHex(hex){
+    const h = hex.trim().replace(/^#/,'');
+    if (!(h.length === 3 || h.length === 6)) return null;
+    const full = h.length === 3 ? h.split('').map(c => c+c).join('') : h;
+    const n = Number.parseInt(full, 16);
+    if (!Number.isFinite(n)) return null;
+    return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+  }
+
+  function mixRGB(c1, c2, t){
+    return {
+      r: Math.round(lerp(c1.r, c2.r, t)),
+      g: Math.round(lerp(c1.g, c2.g, t)),
+      b: Math.round(lerp(c1.b, c2.b, t)),
+    };
+  }
+
+  // ---------- Deterministic RNG (xorshift32) ----------
+  function XorShift32(seed){
+    let x = (seed|0) || 1;
+    return function(){
+      x ^= x << 13; x |= 0;
+      x ^= x >>> 17; x |= 0;
+      x ^= x << 5; x |= 0;
+      // 0..1
+      return ((x >>> 0) / 4294967296);
+    };
+  }
+
+  // ---------- Value noise + fBm ----------
+  // Hash integer coords to pseudo-random (seeded)
+  function hash2i(ix, iy, seed){
+    // mix bits (cheap)
+    let x = ix|0, y = iy|0, s = seed|0;
+    let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
+    h = (h ^ (h >>> 13)) | 0;
+    h = (h * 1274126177) | 0;
+    h = (h ^ (h >>> 16)) | 0;
+    return (h >>> 0) / 4294967296; // 0..1
+  }
+
+  function fade(t){ return t*t*(3 - 2*t); }
+
+  function valueNoise2D(x, y, seed){
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const x1 = x0 + 1, y1 = y0 + 1;
+    const sx = fade(x - x0);
+    const sy = fade(y - y0);
+
+    const n00 = hash2i(x0, y0, seed);
+    const n10 = hash2i(x1, y0, seed);
+    const n01 = hash2i(x0, y1, seed);
+    const n11 = hash2i(x1, y1, seed);
+
+    const ix0 = lerp(n00, n10, sx);
+    const ix1 = lerp(n01, n11, sx);
+    return lerp(ix0, ix1, sy); // 0..1
+  }
+
+  function fbm2D(x, y, opts){
+    const { seed, octaves, persistence, lacunarity } = opts;
+    let amp = 1.0;
+    let freq = 1.0;
+    let sum = 0.0;
+    let norm = 0.0;
+
+    for (let i=0; i<octaves; i++){
+      const n = valueNoise2D(x*freq, y*freq, seed + i*1013);
+      sum += n * amp;
+      norm += amp;
+      amp *= persistence;
+      freq *= lacunarity;
+    }
+    return sum / (norm || 1);
+  }
+
+  // ---------- Core render ----------
+  const canvas = $("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  const status = $("status");
+
+  let inputImg = null;
+
+  function setStatus(msg){ status.textContent = msg; }
+
+  function updateReadouts(){
+    $("blendVal").textContent = Number($("blend").value).toFixed(3);
+    $("midSplitVal").textContent = Number($("midSplit").value).toFixed(3);
+    $("highSplitVal").textContent = Number($("highSplit").value).toFixed(3);
+    $("noiseAmtVal").textContent = Number($("noiseAmt").value).toFixed(3);
+    $("warpVal").textContent = Number($("warp").value).toFixed(3);
+    $("waterThreshVal").textContent = String($("waterThresh").value);
+  }
+
+  ["blend","midSplit","highSplit","noiseAmt","warp","waterThresh"].forEach(id => {
+    $(id).addEventListener("input", updateReadouts);
+  });
+  updateReadouts();
+
+  function isWater(r,g,b,a, waterThresh){
+    if (a === 0) return true; // transparent/blank
+    // near black => water
+    return (r <= waterThresh && g <= waterThresh && b <= waterThresh);
+  }
+
+  function computeLandColor(elev01, cols, splits, blendWidth){
+    const { low, mid, high } = cols;
+    const { midSplit, highSplit } = splits;
+
+    // Ensure order (if user sets weird)
+    const m = clamp01(midSplit);
+    const h = clamp01(Math.max(highSplit, m + 1e-6));
+
+    const w = clamp01(blendWidth);
+
+    // Blend low->mid around midSplit
+    const tLM = smoothstep(m - w, m + w, elev01);
+    const cLM = mixRGB(low, mid, tLM);
+
+    // Blend mid->high around highSplit
+    const tMH = smoothstep(h - w, h + w, elev01);
+    const cMH = mixRGB(mid, high, tMH);
+
+    // Choose region with soft combine:
+    // Below highSplit mostly cLM, above mostly cMH
+    const region = smoothstep(h - w, h + w, elev01);
+    return mixRGB(cLM, cMH, region);
+  }
+
+  function render(){
+    if (!inputImg){
+      setStatus("No input image loaded.");
+      return;
+    }
+
+    const outW = Math.max(1, Math.floor(Number($("outW").value) || inputImg.width));
+    const outH = Math.max(1, Math.floor(Number($("outH").value) || inputImg.height));
+    canvas.width = outW;
+    canvas.height = outH;
+
+    // Draw input into offscreen at output size so mask scales
+    const off = document.createElement("canvas");
+    off.width = outW;
+    off.height = outH;
+    const offCtx = off.getContext("2d", { willReadFrequently: true });
+    offCtx.imageSmoothingEnabled = false;
+    offCtx.clearRect(0,0,outW,outH);
+    offCtx.drawImage(inputImg, 0, 0, outW, outH);
+
+    const imgData = offCtx.getImageData(0,0,outW,outH);
+    const data = imgData.data;
+
+    const waterThresh = Math.max(0, Math.min(64, Number($("waterThresh").value) || 0));
+    const waterColor = parseHex($("waterColor").value) || { r:0, g:0, b:0x6a };
+
+    const colHigh = parseHex($("colHigh").value) || { r:245, g:245, b:200 };
+    const colMid  = parseHex($("colMid").value)  || { r:228, g:211, b:168 };
+    const colLow  = parseHex($("colLow").value)  || { r:190, g:215, b:145 };
+
+    const blendWidth = Number($("blend").value) || 0;
+    const midSplit = Number($("midSplit").value) || 0.45;
+    const highSplit = Number($("highSplit").value) || 0.70;
+    const noiseAmt = Number($("noiseAmt").value) || 0;
+
+    const scale = Math.max(1, Number($("scale").value) || 110);
+    const octaves = Math.max(1, Math.min(10, Math.floor(Number($("octaves").value) || 5)));
+    const persistence = Math.max(0, Math.min(1, Number($("persistence").value) || 0.5));
+    const lacunarity = Math.max(1, Math.min(6, Number($("lacunarity").value) || 2));
+    const seed = (Number($("seed").value) || 1) | 0;
+    const warp = Number($("warp").value) || 0;
+
+    const noiseOpts = { seed, octaves, persistence, lacunarity };
+
+    // Render output
+    const out = ctx.createImageData(outW, outH);
+    const outD = out.data;
+
+    // Precompute reciprocal scale for speed
+    const invScale = 1.0 / scale;
+
+    // Domain warp uses two fBm fields to offset coords
+    function warpedFbm(nx, ny){
+      if (warp <= 0) return fbm2D(nx, ny, noiseOpts);
+      const wx = fbm2D(nx + 11.7, ny + 93.1, noiseOpts) * 2 - 1; // -1..1
+      const wy = fbm2D(nx + 55.3, ny + 19.9, noiseOpts) * 2 - 1;
+      return fbm2D(nx + wx * warp, ny + wy * warp, noiseOpts);
+    }
+
+    for (let y=0; y<outH; y++){
+      for (let x=0; x<outW; x++){
+        const i = (y*outW + x) * 4;
+        const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+
+        if (isWater(r,g,b,a, waterThresh)){
+          outD[i] = waterColor.r;
+          outD[i+1] = waterColor.g;
+          outD[i+2] = waterColor.b;
+          outD[i+3] = 255;
+          continue;
+        }
+
+        // Base "elevation" from mask brightness (0..1)
+        const base = (r + g + b) / (3 * 255);
+
+        // Add layered noise
+        const nx = x * invScale;
+        const ny = y * invScale;
+        const n = warpedFbm(nx, ny); // 0..1
+        const elev = clamp01(lerp(base, (base + (n*2 - 1)), noiseAmt));
+
+        const col = computeLandColor(
+          elev,
+          { low: colLow, mid: colMid, high: colHigh },
+          { midSplit, highSplit },
+          blendWidth
+        );
+
+        outD[i] = col.r;
+        outD[i+1] = col.g;
+        outD[i+2] = col.b;
+        outD[i+3] = 255;
+      }
+    }
+
+    ctx.putImageData(out, 0, 0);
+    setStatus(`Rendered ${outW}×${outH}.`);
+  }
+
+  // ---------- Events ----------
+  $("file").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      inputImg = img;
+      // default export size to input
+      $("outW").value = String(img.width);
+      $("outH").value = String(img.height);
+      setStatus(`Loaded input: ${img.width}×${img.height}.`);
+      render();
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      setStatus("Failed to load image.");
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  });
+
+  $("renderBtn").addEventListener("click", render);
+
+  $("fitBtn").addEventListener("click", () => {
+    if (!inputImg) { setStatus("No input image loaded."); return; }
+    $("outW").value = String(inputImg.width);
+    $("outH").value = String(inputImg.height);
+    render();
+  });
+
+  $("randSeedBtn").addEventListener("click", () => {
+    const rnd = Math.floor(Math.random() * 2147483647);
+    $("seed").value = String(rnd);
+    render();
+  });
+
+  $("downloadBtn").addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.download = "terrain.png";
+    a.href = canvas.toDataURL("image/png");
+    a.click();
+  });
+
+  // Auto re-render on key setting changes (lightweight)
+  const autoIds = ["waterThresh","waterColor","colHigh","colMid","colLow","blend","midSplit","highSplit","noiseAmt","scale","octaves","persistence","lacunarity","seed","warp","outW","outH"];
+  autoIds.forEach(id => {
+    $(id).addEventListener("change", () => {
+      if (id === "outW" || id === "outH") return; // avoid surprise resizes; use Render
+      if (inputImg) render();
+    });
+  });
+
+  setStatus("Load an image to begin.");
+})();
+</script>
+</body>
+</html>
