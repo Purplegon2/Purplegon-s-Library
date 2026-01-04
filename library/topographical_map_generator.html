@@ -22,6 +22,7 @@
     canvas { width: 100%; height: auto; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; }
     .hint { font-size: 12px; opacity: .8; margin-top: 8px; line-height: 1.35; }
     .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   </style>
 </head>
@@ -50,6 +51,7 @@
         <input id="colLow"  type="text" value="#bed791" />
       </div>
 
+      <label>Region splits + blending</label>
       <div class="grid2">
         <div>
           <label>Blend amount (transition width)</label>
@@ -58,7 +60,7 @@
         </div>
         <div>
           <label>Midline (low↔mid split)</label>
-          <input id="midSplit" type="range" min="0" max="1" step="0.001" value="0.45" />
+          <input id="midSplit" type="range" min="0" max="1" step="0.001" value="0.48" />
           <div class="hint mono" id="midSplitVal"></div>
         </div>
       </div>
@@ -66,13 +68,39 @@
       <div class="grid2">
         <div>
           <label>Highline (mid↔high split)</label>
-          <input id="highSplit" type="range" min="0" max="1" step="0.001" value="0.70" />
+          <input id="highSplit" type="range" min="0" max="1" step="0.001" value="0.78" />
           <div class="hint mono" id="highSplitVal"></div>
         </div>
+        <div>
+          <label>Highlands bias (push high higher)</label>
+          <input id="highBias" type="range" min="0" max="1" step="0.001" value="0.25" />
+          <div class="hint mono" id="highBiasVal"></div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Contrast (land only)</label>
+          <input id="contrast" type="range" min="0.25" max="2.5" step="0.001" value="1.05" />
+          <div class="hint mono" id="contrastVal"></div>
+        </div>
+        <div>
+          <label>Gamma (land only)</label>
+          <input id="gamma" type="range" min="0.25" max="2.5" step="0.001" value="1.15" />
+          <div class="hint mono" id="gammaVal"></div>
+        </div>
+      </div>
+
+      <div class="grid2">
         <div>
           <label>Noise strength (0–1)</label>
           <input id="noiseAmt" type="range" min="0" max="1" step="0.001" value="0.40" />
           <div class="hint mono" id="noiseAmtVal"></div>
+        </div>
+        <div>
+          <label>Noise mix (0 = add, 1 = replace)</label>
+          <input id="noiseMix" type="range" min="0" max="1" step="0.001" value="0.35" />
+          <div class="hint mono" id="noiseMixVal"></div>
         </div>
       </div>
 
@@ -80,7 +108,7 @@
       <div class="grid2">
         <div>
           <label>Scale (bigger = smoother)</label>
-          <input id="scale" type="number" value="110" min="1" step="1" />
+          <input id="scale" type="number" value="125" min="1" step="1" />
         </div>
         <div>
           <label>Octaves</label>
@@ -128,11 +156,12 @@
       </div>
 
       <div class="hint">
-        Notes:
+        New controls for reducing highlands:
         <ul>
-          <li>Water = pixel is transparent OR near-black (threshold above).</li>
-          <li>Land = your 3-color palette, blended using split lines + blend amount.</li>
-          <li>Noise is layered (fBm) and can be warped for more organic patterns.</li>
+          <li><span class="mono">Highline</span>: raise it to make highlands rarer.</li>
+          <li><span class="mono">Highlands bias</span>: pushes values upward before splitting (higher = fewer highs).</li>
+          <li><span class="mono">Gamma</span>: &gt;1 shifts more land into lower/mid.</li>
+          <li><span class="mono">Contrast</span>: adjust overall spread of elevations.</li>
         </ul>
       </div>
     </div>
@@ -145,7 +174,6 @@
 
 <script>
 (() => {
-  // ---------- Utilities ----------
   const $ = (id) => document.getElementById(id);
 
   function clamp01(x){ return x < 0 ? 0 : (x > 1 ? 1 : x); }
@@ -172,28 +200,14 @@
     };
   }
 
-  // ---------- Deterministic RNG (xorshift32) ----------
-  function XorShift32(seed){
-    let x = (seed|0) || 1;
-    return function(){
-      x ^= x << 13; x |= 0;
-      x ^= x >>> 17; x |= 0;
-      x ^= x << 5; x |= 0;
-      // 0..1
-      return ((x >>> 0) / 4294967296);
-    };
-  }
-
-  // ---------- Value noise + fBm ----------
   // Hash integer coords to pseudo-random (seeded)
   function hash2i(ix, iy, seed){
-    // mix bits (cheap)
     let x = ix|0, y = iy|0, s = seed|0;
     let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
     h = (h ^ (h >>> 13)) | 0;
     h = (h * 1274126177) | 0;
     h = (h ^ (h >>> 16)) | 0;
-    return (h >>> 0) / 4294967296; // 0..1
+    return (h >>> 0) / 4294967296;
   }
 
   function fade(t){ return t*t*(3 - 2*t); }
@@ -211,16 +225,12 @@
 
     const ix0 = lerp(n00, n10, sx);
     const ix1 = lerp(n01, n11, sx);
-    return lerp(ix0, ix1, sy); // 0..1
+    return lerp(ix0, ix1, sy);
   }
 
   function fbm2D(x, y, opts){
     const { seed, octaves, persistence, lacunarity } = opts;
-    let amp = 1.0;
-    let freq = 1.0;
-    let sum = 0.0;
-    let norm = 0.0;
-
+    let amp = 1.0, freq = 1.0, sum = 0.0, norm = 0.0;
     for (let i=0; i<octaves; i++){
       const n = valueNoise2D(x*freq, y*freq, seed + i*1013);
       sum += n * amp;
@@ -231,10 +241,43 @@
     return sum / (norm || 1);
   }
 
-  // ---------- Core render ----------
+  // Elevation shaping (land only)
+  function applyContrastGammaBias(e, contrast, gamma, highBias){
+    // contrast around 0.5
+    let x = (e - 0.5) * contrast + 0.5;
+    x = clamp01(x);
+
+    // gamma (>1 shifts down; <1 shifts up)
+    x = Math.pow(x, gamma);
+
+    // highlands bias: smoothly pushes top end upward so fewer pixels exceed highSplit
+    // highBias in [0..1] -> exponent from 1 to ~3.5
+    const exp = 1 + highBias * 2.5;
+    x = Math.pow(x, exp);
+
+    return clamp01(x);
+  }
+
+  function computeLandColor(elev01, cols, splits, blendWidth){
+    const { low, mid, high } = cols;
+    const { midSplit, highSplit } = splits;
+
+    const m = clamp01(midSplit);
+    const h = clamp01(Math.max(highSplit, m + 1e-6));
+    const w = clamp01(blendWidth);
+
+    const tLM = smoothstep(m - w, m + w, elev01);
+    const cLM = mixRGB(low, mid, tLM);
+
+    const tMH = smoothstep(h - w, h + w, elev01);
+    const cMH = mixRGB(mid, high, tMH);
+
+    const region = smoothstep(h - w, h + w, elev01);
+    return mixRGB(cLM, cMH, region);
+  }
+
   const canvas = $("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
   const status = $("status");
 
   let inputImg = null;
@@ -242,64 +285,43 @@
   function setStatus(msg){ status.textContent = msg; }
 
   function updateReadouts(){
-    $("blendVal").textContent = Number($("blend").value).toFixed(3);
-    $("midSplitVal").textContent = Number($("midSplit").value).toFixed(3);
-    $("highSplitVal").textContent = Number($("highSplit").value).toFixed(3);
-    $("noiseAmtVal").textContent = Number($("noiseAmt").value).toFixed(3);
-    $("warpVal").textContent = Number($("warp").value).toFixed(3);
-    $("waterThreshVal").textContent = String($("waterThresh").value);
+    const map = [
+      ["blend","blendVal",3],
+      ["midSplit","midSplitVal",3],
+      ["highSplit","highSplitVal",3],
+      ["noiseAmt","noiseAmtVal",3],
+      ["noiseMix","noiseMixVal",3],
+      ["warp","warpVal",3],
+      ["contrast","contrastVal",3],
+      ["gamma","gammaVal",3],
+      ["highBias","highBiasVal",3],
+      ["waterThresh","waterThreshVal",0],
+    ];
+    for (const [id, out, d] of map){
+      const v = Number($(id).value);
+      $(out).textContent = d ? v.toFixed(d) : String($(id).value);
+    }
   }
-
-  ["blend","midSplit","highSplit","noiseAmt","warp","waterThresh"].forEach(id => {
+  ["blend","midSplit","highSplit","noiseAmt","noiseMix","warp","contrast","gamma","highBias","waterThresh"].forEach(id => {
     $(id).addEventListener("input", updateReadouts);
   });
   updateReadouts();
 
   function isWater(r,g,b,a, waterThresh){
-    if (a === 0) return true; // transparent/blank
-    // near black => water
+    if (a === 0) return true;
     return (r <= waterThresh && g <= waterThresh && b <= waterThresh);
   }
 
-  function computeLandColor(elev01, cols, splits, blendWidth){
-    const { low, mid, high } = cols;
-    const { midSplit, highSplit } = splits;
-
-    // Ensure order (if user sets weird)
-    const m = clamp01(midSplit);
-    const h = clamp01(Math.max(highSplit, m + 1e-6));
-
-    const w = clamp01(blendWidth);
-
-    // Blend low->mid around midSplit
-    const tLM = smoothstep(m - w, m + w, elev01);
-    const cLM = mixRGB(low, mid, tLM);
-
-    // Blend mid->high around highSplit
-    const tMH = smoothstep(h - w, h + w, elev01);
-    const cMH = mixRGB(mid, high, tMH);
-
-    // Choose region with soft combine:
-    // Below highSplit mostly cLM, above mostly cMH
-    const region = smoothstep(h - w, h + w, elev01);
-    return mixRGB(cLM, cMH, region);
-  }
-
   function render(){
-    if (!inputImg){
-      setStatus("No input image loaded.");
-      return;
-    }
+    if (!inputImg){ setStatus("No input image loaded."); return; }
 
     const outW = Math.max(1, Math.floor(Number($("outW").value) || inputImg.width));
     const outH = Math.max(1, Math.floor(Number($("outH").value) || inputImg.height));
     canvas.width = outW;
     canvas.height = outH;
 
-    // Draw input into offscreen at output size so mask scales
     const off = document.createElement("canvas");
-    off.width = outW;
-    off.height = outH;
+    off.width = outW; off.height = outH;
     const offCtx = off.getContext("2d", { willReadFrequently: true });
     offCtx.imageSmoothingEnabled = false;
     offCtx.clearRect(0,0,outW,outH);
@@ -316,11 +338,17 @@
     const colLow  = parseHex($("colLow").value)  || { r:190, g:215, b:145 };
 
     const blendWidth = Number($("blend").value) || 0;
-    const midSplit = Number($("midSplit").value) || 0.45;
-    const highSplit = Number($("highSplit").value) || 0.70;
-    const noiseAmt = Number($("noiseAmt").value) || 0;
+    const midSplit = Number($("midSplit").value) || 0.48;
+    const highSplit = Number($("highSplit").value) || 0.78;
 
-    const scale = Math.max(1, Number($("scale").value) || 110);
+    const noiseAmt = Number($("noiseAmt").value) || 0;
+    const noiseMix = Number($("noiseMix").value) || 0; // 0 add, 1 replace
+
+    const contrast = Number($("contrast").value) || 1;
+    const gamma = Number($("gamma").value) || 1;
+    const highBias = Number($("highBias").value) || 0;
+
+    const scale = Math.max(1, Number($("scale").value) || 125);
     const octaves = Math.max(1, Math.min(10, Math.floor(Number($("octaves").value) || 5)));
     const persistence = Math.max(0, Math.min(1, Number($("persistence").value) || 0.5));
     const lacunarity = Math.max(1, Math.min(6, Number($("lacunarity").value) || 2));
@@ -329,17 +357,14 @@
 
     const noiseOpts = { seed, octaves, persistence, lacunarity };
 
-    // Render output
     const out = ctx.createImageData(outW, outH);
     const outD = out.data;
 
-    // Precompute reciprocal scale for speed
     const invScale = 1.0 / scale;
 
-    // Domain warp uses two fBm fields to offset coords
     function warpedFbm(nx, ny){
       if (warp <= 0) return fbm2D(nx, ny, noiseOpts);
-      const wx = fbm2D(nx + 11.7, ny + 93.1, noiseOpts) * 2 - 1; // -1..1
+      const wx = fbm2D(nx + 11.7, ny + 93.1, noiseOpts) * 2 - 1;
       const wy = fbm2D(nx + 55.3, ny + 19.9, noiseOpts) * 2 - 1;
       return fbm2D(nx + wx * warp, ny + wy * warp, noiseOpts);
     }
@@ -357,14 +382,24 @@
           continue;
         }
 
-        // Base "elevation" from mask brightness (0..1)
+        // Base elevation from input brightness
         const base = (r + g + b) / (3 * 255);
 
-        // Add layered noise
+        // Noise field
         const nx = x * invScale;
         const ny = y * invScale;
         const n = warpedFbm(nx, ny); // 0..1
-        const elev = clamp01(lerp(base, (base + (n*2 - 1)), noiseAmt));
+        const nSigned = (n * 2 - 1); // -1..1
+
+        // Combine:
+        // - "add" path: base + nSigned*noiseAmt
+        // - "replace" path: lerp(base, n, noiseAmt)
+        const addElev = clamp01(base + nSigned * noiseAmt);
+        const repElev = clamp01(lerp(base, n, noiseAmt));
+        let elev = lerp(addElev, repElev, clamp01(noiseMix));
+
+        // Shape to reduce highlands
+        elev = applyContrastGammaBias(elev, contrast, gamma, highBias);
 
         const col = computeLandColor(
           elev,
@@ -384,7 +419,7 @@
     setStatus(`Rendered ${outW}×${outH}.`);
   }
 
-  // ---------- Events ----------
+  // Events
   $("file").addEventListener("change", async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
@@ -393,7 +428,6 @@
     const img = new Image();
     img.onload = () => {
       inputImg = img;
-      // default export size to input
       $("outW").value = String(img.width);
       $("outH").value = String(img.height);
       setStatus(`Loaded input: ${img.width}×${img.height}.`);
@@ -429,14 +463,8 @@
     a.click();
   });
 
-  // Auto re-render on key setting changes (lightweight)
-  const autoIds = ["waterThresh","waterColor","colHigh","colMid","colLow","blend","midSplit","highSplit","noiseAmt","scale","octaves","persistence","lacunarity","seed","warp","outW","outH"];
-  autoIds.forEach(id => {
-    $(id).addEventListener("change", () => {
-      if (id === "outW" || id === "outH") return; // avoid surprise resizes; use Render
-      if (inputImg) render();
-    });
-  });
+  const autoIds = ["waterThresh","waterColor","colHigh","colMid","colLow","blend","midSplit","highSplit","noiseAmt","noiseMix","scale","octaves","persistence","lacunarity","seed","warp","contrast","gamma","highBias"];
+  autoIds.forEach(id => $(id).addEventListener("change", () => { if (inputImg) render(); }));
 
   setStatus("Load an image to begin.");
 })();
