@@ -1,0 +1,1288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cedar</title>
+  <style>
+    :root{
+      --bg:#000;
+      --fg:#fff;
+      --dim:#9a9a9a;
+      --err:#ff6b6b;
+      --ok:#9cff9c;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);}
+    body{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:14px; line-height:1.35;}
+    #screen{
+      white-space:pre-wrap;
+      word-break:break-word;
+      padding:12px;
+      box-sizing:border-box;
+      height:100%;
+      overflow:auto;
+      outline:none;
+      user-select:text;
+    }
+    .dim{color:var(--dim);}
+    .err{color:var(--err);}
+    .ok{color:var(--ok);}
+    .caret{
+      display:inline-block;
+      width:8px;
+      transform: translateY(1px);
+      background:var(--fg);
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { background: transparent; } }
+    ::selection{background:#2b4bff;color:#fff;}
+  </style>
+</head>
+<body>
+  <div id="screen" tabindex="0" aria-label="Cedar terminal"></div>
+
+<script>
+(() => {
+  const screen = document.getElementById("screen");
+
+  const state = {
+    user: "guest",
+    host: "cedar",
+    cwd: "/home/guest",
+    env: {
+      HOME: "/home/guest",
+      USER: "guest",
+      HOSTNAME: "cedar",
+      PATH: "/bin:/usr/bin",
+      SHELL: "/bin/cedarsh",
+      PS1: "%u@%h:%w$ "
+    },
+    history: [],
+    histIndex: -1,
+    input: "",
+    cursor: 0,
+    interrupted: false,
+    lastStatus: 0,
+    wasm: { add: null },
+  };
+
+  function ps1() {
+    const w = state.cwd === state.env.HOME ? "~" : state.cwd;
+    return state.env.PS1
+      .replaceAll("%u", state.user)
+      .replaceAll("%h", state.host)
+      .replaceAll("%w", w);
+  }
+
+  function escText(s) {
+    return String(s).replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "?");
+  }
+
+  function write(text, cls="") {
+    const span = document.createElement("span");
+    if (cls) span.className = cls;
+    span.textContent = escText(text);
+    screen.appendChild(span);
+    screen.scrollTop = screen.scrollHeight;
+  }
+  function writeln(text="", cls="") { write(text + "\n", cls); }
+
+  function renderPrompt() {
+    write(ps1());
+    renderInputLine();
+  }
+
+  function clearScreen() {
+    screen.textContent = "";
+  }
+
+  function renderInputLine() {
+    if (!state._liveRow) {
+      state._liveRow = document.createElement("span");
+      screen.appendChild(state._liveRow);
+    }
+    const left = state.input.slice(0, state.cursor);
+    const right = state.input.slice(state.cursor);
+    state._liveRow.textContent = "";
+    const a = document.createElement("span"); a.textContent = escText(left);
+    const caret = document.createElement("span"); caret.className = "caret"; caret.textContent = " ";
+    const b = document.createElement("span"); b.textContent = escText(right);
+    state._liveRow.appendChild(a);
+    state._liveRow.appendChild(caret);
+    state._liveRow.appendChild(b);
+    screen.scrollTop = screen.scrollHeight;
+  }
+
+  function commitInputLine() {
+    const full = state.input;
+    if (state._liveRow) {
+      state._liveRow.textContent = escText(state.input);
+      state._liveRow = null;
+    }
+    writeln("");
+    state.input = "";
+    state.cursor = 0;
+    state.histIndex = -1;
+    return full;
+  }
+
+  /* ---------- Virtual Filesystem ---------- */
+  function mkDir(name, mode=0o755, owner="root") {
+    return { t:"dir", name, mode, owner, kids: new Map(), mtime: Date.now() };
+  }
+  function mkFile(name, content="", mode=0o644, owner="root") {
+    return { t:"file", name, mode, owner, content, mtime: Date.now() };
+  }
+
+  const FS_KEY = "cedar.fs.v1";
+  const fs = { root: mkDir("/") };
+
+  function serializeNode(node) {
+    if (node.t === "file") return { t:"file", name:node.name, mode:node.mode, owner:node.owner, content:node.content, mtime:node.mtime };
+    return {
+      t:"dir",
+      name: node.name,
+      mode: node.mode,
+      owner: node.owner,
+      mtime: node.mtime,
+      kids: Array.from(node.kids.values()).map(serializeNode),
+    };
+  }
+  function deserializeNode(obj) {
+    if (obj.t === "file") return { ...obj };
+    const d = mkDir(obj.name, obj.mode, obj.owner);
+    d.mtime = obj.mtime || Date.now();
+    d.kids = new Map();
+    (obj.kids || []).forEach(child => {
+      const n = deserializeNode(child);
+      d.kids.set(n.name, n);
+    });
+    return d;
+  }
+  function fsSave() {
+    try { localStorage.setItem(FS_KEY, JSON.stringify(serializeNode(fs.root))); } catch {}
+  }
+  function fsLoad() {
+    try {
+      const raw = localStorage.getItem(FS_KEY);
+      if (!raw) return false;
+      fs.root = deserializeNode(JSON.parse(raw));
+      return true;
+    } catch { return false; }
+  }
+
+  function pathNormalize(p) {
+    if (!p) return state.cwd;
+    if (p.startsWith("~")) p = state.env.HOME + p.slice(1);
+    if (!p.startsWith("/")) p = state.cwd.replace(/\/+$/,"") + "/" + p;
+    const parts = p.split("/").filter(Boolean);
+    const stack = [];
+    for (const part of parts) {
+      if (part === ".") continue;
+      if (part === "..") { if (stack.length) stack.pop(); continue; }
+      stack.push(part);
+    }
+    return "/" + stack.join("/");
+  }
+
+  function fsGetNode(path) {
+    const p = pathNormalize(path);
+    if (p === "/") return { node: fs.root, parent: null, name: "/" };
+    const parts = p.split("/").filter(Boolean);
+    let cur = fs.root;
+    let parent = null;
+    for (const part of parts) {
+      if (cur.t !== "dir") return null;
+      parent = cur;
+      cur = cur.kids.get(part);
+      if (!cur) return null;
+    }
+    return { node: cur, parent, name: parts[parts.length-1] };
+  }
+
+  function fsEnsureDir(path) {
+    const p = pathNormalize(path);
+    const parts = p.split("/").filter(Boolean);
+    let cur = fs.root;
+    for (const part of parts) {
+      let n = cur.kids.get(part);
+      if (!n) { n = mkDir(part, 0o755, "root"); cur.kids.set(part, n); }
+      if (n.t !== "dir") throw new Error("not a directory");
+      cur = n;
+    }
+    return cur;
+  }
+
+  function fsWriteFile(path, content, append=false) {
+    const p = pathNormalize(path);
+    const parts = p.split("/").filter(Boolean);
+    const fname = parts.pop();
+    const dirPath = "/" + parts.join("/");
+    const dir = (parts.length ? fsGetNode(dirPath)?.node : fs.root);
+    if (!dir || dir.t !== "dir") throw new Error("no such directory");
+    const existing = dir.kids.get(fname);
+    if (existing && existing.t !== "file") throw new Error("not a file");
+    if (!existing) dir.kids.set(fname, mkFile(fname, content, 0o644, state.user));
+    else existing.content = append ? (existing.content + content) : content;
+    dir.kids.get(fname).mtime = Date.now();
+    fsSave();
+  }
+
+  function fsReadFile(path) {
+    const g = fsGetNode(path);
+    if (!g || g.node.t !== "file") throw new Error("no such file");
+    return g.node.content;
+  }
+
+  function fsRemove(path, recursive=false) {
+    const g = fsGetNode(path);
+    if (!g || !g.parent) throw new Error("no such file or directory");
+    if (g.node.t === "dir" && g.node.kids.size && !recursive) throw new Error("directory not empty");
+    g.parent.kids.delete(g.name);
+    fsSave();
+  }
+
+  function fsMove(src, dst) {
+    const gs = fsGetNode(src);
+    if (!gs || !gs.parent) throw new Error("no such file or directory");
+    const dstNorm = pathNormalize(dst);
+    const parts = dstNorm.split("/").filter(Boolean);
+    const name = parts.pop();
+    const dirPath = "/" + parts.join("/");
+    const gd = (parts.length ? fsGetNode(dirPath)?.node : fs.root);
+    if (!gd || gd.t !== "dir") throw new Error("no such directory");
+    gs.parent.kids.delete(gs.name);
+    gs.node.name = name;
+    gd.kids.set(name, gs.node);
+    fsSave();
+  }
+
+  function fsCopy(src, dst) {
+    const gs = fsGetNode(src);
+    if (!gs) throw new Error("no such file or directory");
+    function clone(n) {
+      if (n.t === "file") return mkFile(n.name, n.content, n.mode, n.owner);
+      const d = mkDir(n.name, n.mode, n.owner);
+      for (const child of n.kids.values()) d.kids.set(child.name, clone(child));
+      return d;
+    }
+    const dstNorm = pathNormalize(dst);
+    const parts = dstNorm.split("/").filter(Boolean);
+    const name = parts.pop();
+    const dirPath = "/" + parts.join("/");
+    const gd = (parts.length ? fsGetNode(dirPath)?.node : fs.root);
+    if (!gd || gd.t !== "dir") throw new Error("no such directory");
+    const c = clone(gs.node);
+    c.name = name;
+    gd.kids.set(name, c);
+    fsSave();
+  }
+
+  function fsList(path) {
+    const g = fsGetNode(path || state.cwd);
+    if (!g) throw new Error("no such file or directory");
+    if (g.node.t !== "dir") return [g.node.name];
+    return Array.from(g.node.kids.keys()).sort((a,b)=>a.localeCompare(b));
+  }
+
+  function seedFsIfEmpty() {
+    if (fsLoad()) return;
+    fs.root = mkDir("/");
+    fsEnsureDir("/home/guest");
+    fsEnsureDir("/tmp");
+    fsEnsureDir("/bin");
+    fsEnsureDir("/usr/bin");
+    fsEnsureDir("/etc");
+
+    fsWriteFile("/home/guest/README.txt",
+`Cedar (browser) terminal OS
+- Type 'help' for commands.
+- Try: ls; cat README.txt
+- Scripting: cedar command file <file>
+- ASM: asmrun <file>
+- GitHub install: ghub get <github-url> [dest]
+
+Persistence: localStorage (same browser profile).
+`, false);
+
+    fsWriteFile("/home/guest/loop.ccf",
+`# cedar command file example: prints numbers 1..10
+set i 1
+:top
+echo $i
+add i 1
+lt i 11
+jnz top
+exit 0
+`, false);
+
+    fsWriteFile("/home/guest/demo2.ced",
+`# demo.ced - Cedar script example
+echo starting
+pwd
+ls
+echo make a folder and file
+mkdir test
+echo hello > test/hi.txt
+cat test/hi.txt
+echo done
+`, false);
+
+
+    fsWriteFile("/home/guest/demo.asm",
+`; demo.asm (Cedar tiny-asm)
+; prints 1..10 using a loop
+
+mov r0, 1      ; i
+mov r1, 11     ; limit
+:top
+out r0
+add r0, 1
+cmp_lt r0, r1
+jnz top
+hlt
+`, false);
+
+    fsSave();
+  }
+
+  /* ---------- Shell parsing/execution ---------- */
+  function tokenize(line) {
+    const out = [];
+    let i = 0, cur = "", q = null;
+    const push = () => { if (cur.length) out.push(cur); cur = ""; };
+    while (i < line.length) {
+      const ch = line[i];
+      if (q) {
+        if (ch === q) { q = null; i++; continue; }
+        if (ch === "\\" && q === '"' && i+1 < line.length) { cur += line[i+1]; i+=2; continue; }
+        cur += ch; i++; continue;
+      }
+      if (ch === "'" || ch === '"') { q = ch; i++; continue; }
+      if (/\s/.test(ch)) { push(); i++; continue; }
+      if (";&|()<>".includes(ch)) {
+        push();
+        const two = line.slice(i, i+2);
+        if (["&&","||",">>",";;"].includes(two)) { out.push(two); i+=2; continue; }
+        out.push(ch); i++; continue;
+      }
+      if (ch === "\\") { if (i+1 < line.length) { cur += line[i+1]; i+=2; } else i++; continue; }
+      cur += ch; i++;
+    }
+    push();
+    return out;
+  }
+
+  function expandVars(s) {
+    return s.replace(/\$(\w+)|\$\{([^}]+)\}/g, (_, a, b) => {
+      const k = a || b;
+      if (k === "?") return String(state.lastStatus);
+      return (state.env[k] ?? "");
+    });
+  }
+
+  function parseCommands(tokens) {
+    const segments = [];
+    let cur = [];
+    const ops = new Set([";","&&","||"]);
+    for (let i=0;i<tokens.length;i++) {
+      const t = tokens[i];
+      if (ops.has(t)) {
+        segments.push({ tokens: cur, op: t });
+        cur = [];
+      } else cur.push(t);
+    }
+    segments.push({ tokens: cur, op: null });
+    return segments;
+  }
+
+  function splitPipeline(tokens) {
+    const parts = [];
+    let cur = [];
+    for (const t of tokens) {
+      if (t === "|") { parts.push(cur); cur = []; }
+      else cur.push(t);
+    }
+    parts.push(cur);
+    return parts;
+  }
+
+  function parseRedirect(tokens) {
+    let outFile = null, append = false;
+    const filtered = [];
+    for (let i=0;i<tokens.length;i++) {
+      const t = tokens[i];
+      if (t === ">" || t === ">>") {
+        const f = tokens[i+1];
+        if (!f) throw new Error("redirect missing file");
+        outFile = f;
+        append = (t === ">>");
+        i++;
+      } else filtered.push(t);
+    }
+    return { argv: filtered, outFile, append };
+  }
+
+  async function runLine(line) {
+    const tokens0 = tokenize(line).map(expandVars);
+    if (tokens0.length === 0) return 0;
+    const segments = parseCommands(tokens0);
+    let status = 0;
+    for (const seg of segments) {
+      if (!seg.tokens.length) continue;
+      if (seg.op === "&&" && status !== 0) continue;
+      if (seg.op === "||" && status === 0) continue;
+      status = await runPipeline(seg.tokens, "");
+      state.lastStatus = status;
+      if (state.interrupted) { state.interrupted = false; return 130; }
+    }
+    return status;
+  }
+
+  async function runPipeline(tokens, stdin) {
+    const stages = splitPipeline(tokens);
+    let inStream = stdin;
+    for (let si=0; si<stages.length; si++) {
+      const { argv, outFile, append } = parseRedirect(stages[si]);
+      if (!argv.length) return 0;
+      const res = await execCommand(argv, inStream);
+      if (res.stderr) write(res.stderr, "err");
+      inStream = res.stdout ?? "";
+      if (res.code !== 0) {
+        if (outFile && si === stages.length-1) { try { fsWriteFile(outFile, inStream, append); } catch {} }
+        return res.code;
+      }
+      if (outFile && si === stages.length-1) {
+        fsWriteFile(outFile, inStream, append);
+        inStream = "";
+      }
+    }
+    if (inStream) write(inStream);
+    return 0;
+  }
+
+  function ok(stdout="") { return { code:0, stdout, stderr:"" }; }
+  function fail(msg, code=1) { return { code, stdout:"", stderr: msg.endsWith("\n") ? msg : (msg + "\n") }; }
+
+  const commands = Object.create(null);
+
+  commands.help = async () => ok(
+`Cedar commands:
+  help, clear, uname, whoami, hostname, date
+  pwd, cd, ls, tree
+  cat, echo, printf
+  touch, mkdir, rm, rmdir
+  cp, mv
+  chmod, stat
+  grep, find, head, tail, wc
+  export, set, unset
+  execute <file>     (Turing-complete command scripting)
+  asmrun <file>      (runs tiny-asm; uses WebAssembly for core arithmetic)
+  ghub get <url> [dest]   (download public GitHub repo/path into Cedar FS)
+  reboot             (reloads Cedar), resetfs (clears Cedar filesystem)
+
+Shell features:
+  sequencing:  cmd1 ; cmd2
+  conditionals: cmd1 && cmd2   /   cmd1 || cmd2
+  pipelines:   cmd1 | cmd2
+  redirect:    cmd > file   /   cmd >> file
+Shortcuts:
+  Ctrl+C interrupt   Ctrl+L clear   Ctrl+A/E start/end
+  Up/Down history    Tab completion
+`);
+
+  commands.clear = async () => { clearScreen(); return ok(""); };
+  commands.uname = async (argv) => ok(argv.includes("-a") ? "Cedar 0.1.0 (browser) x86_64\n" : "Cedar\n");
+  commands.whoami = async () => ok(state.user + "\n");
+  commands.hostname = async () => ok(state.host + "\n");
+  commands.date = async () => ok(new Date().toString() + "\n");
+  commands.pwd = async () => ok(state.cwd + "\n");
+
+  commands.cd = async (argv) => {
+    const p = argv[0] ?? state.env.HOME;
+    const n = fsGetNode(p);
+    if (!n) return fail(`cd: no such file or directory: ${p}`);
+    if (n.node.t !== "dir") return fail(`cd: not a directory: ${p}`);
+    state.cwd = pathNormalize(p);
+    return ok("");
+  };
+
+  commands.ls = async (argv) => {
+    const p = argv[0] ?? state.cwd;
+    try {
+      const list = fsList(p);
+      return ok(list.join("  ") + (list.length ? "\n" : ""));
+    } catch (e) {
+      return fail(`ls: ${e.message}`);
+    }
+  };
+
+  commands.tree = async (argv) => {
+    const p = argv[0] ?? state.cwd;
+    const g = fsGetNode(p);
+    if (!g) return fail(`tree: no such file or directory: ${p}`);
+    const lines = [];
+    function walk(node, prefix) {
+      if (node.t === "dir") {
+        const kids = Array.from(node.kids.values()).sort((a,b)=>a.name.localeCompare(b.name));
+        kids.forEach((k, idx) => {
+          const last = idx === kids.length - 1;
+          const branch = last ? "└── " : "├── ";
+          lines.push(prefix + branch + k.name + (k.t === "dir" ? "/" : ""));
+          walk(k, prefix + (last ? "    " : "│   "));
+        });
+      }
+    }
+    lines.push(pathNormalize(p) + (g.node.t==="dir" ? "/" : ""));
+    walk(g.node, "");
+    return ok(lines.join("\n") + "\n");
+  };
+
+  commands.cat = async (argv, stdin) => {
+    if (!argv.length) return ok(stdin ?? "");
+    let out = "";
+    for (const f of argv) {
+      try { out += fsReadFile(f); if (!out.endsWith("\n")) out += "\n"; }
+      catch (e) { return fail(`cat: ${f}: ${e.message}`); }
+    }
+    return ok(out);
+  };
+
+  commands.echo = async (argv) => ok(argv.join(" ") + "\n");
+  commands.printf = async (argv) => ok(argv.join(" "));
+
+  commands.touch = async (argv) => {
+    if (!argv.length) return fail("touch: missing file operand");
+    for (const f of argv) {
+      const g = fsGetNode(f);
+      if (!g) fsWriteFile(f, "", false);
+      else g.node.mtime = Date.now();
+    }
+    fsSave();
+    return ok("");
+  };
+
+  commands.mkdir = async (argv) => {
+    if (!argv.length) return fail("mkdir: missing operand");
+    for (const d of argv) {
+      const p = pathNormalize(d);
+      const parts = p.split("/").filter(Boolean);
+      const name = parts.pop();
+      const parentPath = "/" + parts.join("/");
+      const parent = (parts.length ? fsGetNode(parentPath)?.node : fs.root);
+      if (!parent || parent.t !== "dir") return fail(`mkdir: cannot create directory '${d}': no such file or directory`);
+      if (parent.kids.has(name)) return fail(`mkdir: cannot create directory '${d}': file exists`);
+      parent.kids.set(name, mkDir(name, 0o755, state.user));
+    }
+    fsSave();
+    return ok("");
+  };
+
+  commands.rm = async (argv) => {
+    if (!argv.length) return fail("rm: missing operand");
+    const recursive = argv[0] === "-r" || argv[0] === "-rf" || argv[0] === "-fr";
+    const list = recursive ? argv.slice(1) : argv;
+    for (const p of list) {
+      try { fsRemove(p, recursive); }
+      catch (e) { return fail(`rm: cannot remove '${p}': ${e.message}`); }
+    }
+    return ok("");
+  };
+
+  commands.rmdir = async (argv) => {
+    if (!argv.length) return fail("rmdir: missing operand");
+    for (const p of argv) {
+      try { fsRemove(p, false); }
+      catch (e) { return fail(`rmdir: failed to remove '${p}': ${e.message}`); }
+    }
+    return ok("");
+  };
+
+  commands.cp = async (argv) => {
+    if (argv.length < 2) return fail("cp: missing file operand");
+    const dst = argv[argv.length-1];
+    const srcs = argv.slice(0,-1);
+    const dstNode = fsGetNode(dst);
+    const dstIsDir = dstNode && dstNode.node.t === "dir";
+    for (const s of srcs) {
+      try {
+        if (dstIsDir) {
+          const base = pathNormalize(s).split("/").filter(Boolean).pop();
+          fsCopy(s, pathNormalize(dst) + "/" + base);
+        } else {
+          if (srcs.length > 1) return fail("cp: target is not a directory");
+          fsCopy(s, dst);
+        }
+      } catch (e) {
+        return fail(`cp: cannot copy '${s}': ${e.message}`);
+      }
+    }
+    return ok("");
+  };
+
+  commands.mv = async (argv) => {
+    if (argv.length < 2) return fail("mv: missing file operand");
+    const dst = argv[argv.length-1];
+    const srcs = argv.slice(0,-1);
+    const dstNode = fsGetNode(dst);
+    const dstIsDir = dstNode && dstNode.node.t === "dir";
+    for (const s of srcs) {
+      try {
+        if (dstIsDir) {
+          const base = pathNormalize(s).split("/").filter(Boolean).pop();
+          fsMove(s, pathNormalize(dst) + "/" + base);
+        } else {
+          if (srcs.length > 1) return fail("mv: target is not a directory");
+          fsMove(s, dst);
+        }
+      } catch (e) {
+        return fail(`mv: cannot move '${s}': ${e.message}`);
+      }
+    }
+    return ok("");
+  };
+
+  commands.chmod = async (argv) => {
+    if (argv.length < 2) return fail("chmod: missing operand");
+    const modeStr = argv[0];
+    const mode = parseInt(modeStr, 8);
+    if (!Number.isFinite(mode)) return fail("chmod: invalid mode (use octal like 755)");
+    for (const p of argv.slice(1)) {
+      const g = fsGetNode(p);
+      if (!g) return fail(`chmod: cannot access '${p}': no such file or directory`);
+      g.node.mode = mode;
+      g.node.mtime = Date.now();
+    }
+    fsSave();
+    return ok("");
+  };
+
+  commands.stat = async (argv) => {
+    if (!argv.length) return fail("stat: missing operand");
+    let out = "";
+    for (const p of argv) {
+      const g = fsGetNode(p);
+      if (!g) return fail(`stat: '${p}': no such file or directory`);
+      const n = g.node;
+      out += `${pathNormalize(p)}\n`;
+      out += `  type: ${n.t}\n`;
+      out += `  owner: ${n.owner}\n`;
+      out += `  mode: ${(n.mode ?? 0).toString(8)}\n`;
+      out += `  mtime: ${new Date(n.mtime||Date.now()).toString()}\n`;
+      if (n.t === "file") out += `  size: ${n.content.length} bytes\n`;
+    }
+    return ok(out);
+  };
+
+  commands.grep = async (argv, stdin) => {
+    if (!argv.length) return fail("grep: missing pattern");
+    const pat = argv[0];
+    const files = argv.slice(1);
+    const re = new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    let out = "";
+    function runText(label, text) {
+      const lines = text.split("\n");
+      for (let i=0;i<lines.length;i++) if (re.test(lines[i])) out += (label ? `${label}:` : "") + lines[i] + "\n";
+    }
+    if (!files.length) { runText("", stdin ?? ""); return ok(out); }
+    for (const f of files) {
+      try { runText(f, fsReadFile(f)); }
+      catch (e) { return fail(`grep: ${f}: ${e.message}`); }
+    }
+    return ok(out);
+  };
+
+  commands.find = async (argv) => {
+    const start = argv[0] ?? state.cwd;
+    const pat = argv[1] ?? "";
+    const g = fsGetNode(start);
+    if (!g) return fail(`find: '${start}': no such file or directory`);
+    const out = [];
+    const base = pathNormalize(start);
+    function match(name) {
+      if (!pat) return true;
+      const rx = new RegExp("^" + pat.split("*").map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join(".*") + "$");
+      return rx.test(name);
+    }
+    function walk(node, p) {
+      if (node.t === "file") { if (match(node.name)) out.push(p); return; }
+      if (node.t === "dir") {
+        if (match(node.name) && p !== base) out.push(p + "/");
+        for (const child of node.kids.values()) walk(child, (p === "/" ? "" : p) + "/" + child.name);
+      }
+    }
+    walk(g.node, base === "/" ? "" : base);
+    return ok(out.sort((a,b)=>a.localeCompare(b)).join("\n") + (out.length ? "\n" : ""));
+  };
+
+  commands.head = async (argv, stdin) => {
+    let n = 10;
+    let files = argv;
+    if (argv[0] === "-n" && argv[1]) { n = parseInt(argv[1],10)||10; files = argv.slice(2); }
+    const text = files.length ? fsReadFile(files[0]) : (stdin ?? "");
+    return ok(text.split("\n").slice(0,n).join("\n") + "\n");
+  };
+
+  commands.tail = async (argv, stdin) => {
+    let n = 10;
+    let files = argv;
+    if (argv[0] === "-n" && argv[1]) { n = parseInt(argv[1],10)||10; files = argv.slice(2); }
+    const text = files.length ? fsReadFile(files[0]) : (stdin ?? "");
+    const lines = text.split("\n");
+    return ok(lines.slice(Math.max(0, lines.length-n)).join("\n") + "\n");
+  };
+
+  commands.wc = async (argv, stdin) => {
+    const text = argv.length ? fsReadFile(argv[0]) : (stdin ?? "");
+    const lines = text.length ? text.split("\n").length : 0;
+    const words = (text.match(/\S+/g) || []).length;
+    const bytes = text.length;
+    return ok(`${lines} ${words} ${bytes}\n`);
+  };
+
+  commands.export = async (argv) => {
+    for (const a of argv) {
+      const eq = a.indexOf("=");
+      if (eq === -1) continue;
+      const k = a.slice(0,eq);
+      const v = a.slice(eq+1);
+      state.env[k] = v;
+    }
+    return ok("");
+  };
+
+    // run: execute a Cedar script (.ced)
+  // Syntax:
+  //   run <file>
+  // Script format:
+  //   - one command line per line
+  //   - blank lines allowed
+  //   - comments start with # (to end of line)
+  commands.run = async (argv) => {
+    if (!argv.length) return fail("run: usage: run <file.ced>");
+    let src;
+    try { src = fsReadFile(argv[0]); }
+    catch (e) { return fail(`run: ${argv[0]}: ${e.message}`); }
+
+    const lines = src.replace(/\r\n/g, "\n").split("\n");
+    let status = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (state.interrupted) { state.interrupted = false; return fail("run: interrupted\n", 130); }
+
+      // strip comments
+      const line = lines[i].replace(/#.*/, "").trim();
+      if (!line) continue;
+
+      status = await runLine(line);
+      state.lastStatus = status;
+
+      // optional: stop on error like "set -e"
+      // if (status !== 0) return fail(`run: failed at line ${i+1}\n`, status);
+    }
+
+    return ok("");
+  };
+
+  commands.set = async (argv) => {
+    if (argv.length < 2) return fail("set: usage: set KEY VALUE");
+    state.env[argv[0]] = argv.slice(1).join(" ");
+    return ok("");
+  };
+  commands.unset = async (argv) => { for (const k of argv) delete state.env[k]; return ok(""); };
+
+  commands.reboot = async () => { location.reload(); return ok(""); };
+  commands.resetfs = async () => { localStorage.removeItem(FS_KEY); seedFsIfEmpty(); return ok("filesystem reset\n"); };
+
+  /* ---------- cedar command file (Turing-complete script runner) ---------- */
+  commands.execute = async (argv) => {
+    if (!argv.length) return fail("cedar command file: usage: execute <file>");
+    let src;
+    try { src = fsReadFile(argv[0]); }
+    catch (e) { return fail(`execute: ${argv[0]}: ${e.message}`); }
+
+    const lines = src.replace(/\r\n/g,"\n").split("\n");
+    const labels = new Map();
+    for (let i=0;i<lines.length;i++) {
+      const line = lines[i].trim();
+      if (line.startsWith(":")) labels.set(line.slice(1).trim(), i);
+    }
+
+    const vars = Object.create(null);
+    let ip = 0;
+    let lastcmp = 0;
+    const maxSteps = 2_000_000;
+    let steps = 0;
+
+    function vget(x) {
+      if (x == null) return "";
+      if (x.startsWith("$")) return String(vars[x.slice(1)] ?? "");
+      return x;
+    }
+    function toNum(x) {
+      const s = vget(x);
+      const n = parseInt(s,10);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    while (ip < lines.length) {
+      if (state.interrupted) { state.interrupted = false; return fail("execute: interrupted\n", 130); }
+      if (++steps > maxSteps) return fail("execute: step limit reached\n", 124);
+
+      let raw = lines[ip++];
+      raw = raw.replace(/#.*/,"").trim();
+      if (!raw) continue;
+      if (raw.startsWith(":")) continue;
+
+      const parts = tokenize(raw).map(expandVars);
+      const op = parts[0];
+      const args = parts.slice(1);
+
+      if (op === "set") vars[args[0]] = args.slice(1).map(vget).join(" ");
+      else if (op === "add") {
+        const k = args[0];
+        const delta = toNum(args[1]);
+        vars[k] = String((parseInt(vars[k] ?? "0",10)||0) + delta);
+      } else if (op === "echo") {
+        const msg = args.map(a => a.startsWith("$") ? vget(a) : a).join(" ");
+        write(msg + "\n");
+      } else if (op === "lt") lastcmp = (toNum(args[0]) < toNum(args[1])) ? 1 : 0;
+      else if (op === "eq") lastcmp = (String(vget(args[0])) === String(vget(args[1]))) ? 1 : 0;
+      else if (op === "jnz") {
+        const lab = args[0];
+        if (lastcmp !== 0) {
+          if (!labels.has(lab)) return fail(`execute: unknown label '${lab}'\n`);
+          ip = labels.get(lab) + 1;
+        }
+      } else if (op === "jz") {
+        const lab = args[0];
+        if (lastcmp === 0) {
+          if (!labels.has(lab)) return fail(`execute: unknown label '${lab}'\n`);
+          ip = labels.get(lab) + 1;
+        }
+      } else if (op === "exit") {
+        const code = parseInt(args[0] ?? "0",10) || 0;
+        return { code, stdout:"", stderr:"" };
+      } else return fail(`execute: unknown opcode '${op}'\n`);
+    }
+    return ok("");
+  };
+
+  /* ---------- asmrun (tiny asm runner; uses Wasm add) ---------- */
+  async function ensureWasm() {
+    if (state.wasm.add) return true;
+    const bytes = new Uint8Array([
+      0x00,0x61,0x73,0x6d, 0x01,0x00,0x00,0x00,
+      0x01,0x07,0x01,0x60,0x02,0x7f,0x7f,0x01,0x7f,
+      0x03,0x02,0x01,0x00,
+      0x07,0x07,0x01,0x03,0x61,0x64,0x64,0x00,0x00,
+      0x0a,0x09,0x01,0x07,0x00,0x20,0x00,0x20,0x01,0x6a,0x0b
+    ]);
+    try {
+      const mod = await WebAssembly.instantiate(bytes, {});
+      state.wasm.add = mod.instance.exports.add;
+      return true;
+    } catch { state.wasm.add = null; return false; }
+  }
+
+  commands.asmrun = async (argv) => {
+    if (!argv.length) return fail("asmrun: usage: asmrun <file>");
+    let src;
+    try { src = fsReadFile(argv[0]); }
+    catch (e) { return fail(`asmrun: ${argv[0]}: ${e.message}`); }
+
+    await ensureWasm();
+
+    const lines = src.replace(/\r\n/g,"\n").split("\n");
+    const cleaned = [];
+    const labels = new Map();
+    const stripComment = (s)=>s.replace(/;.*/,"").trim();
+
+    for (let i=0;i<lines.length;i++) {
+      const line = stripComment(lines[i]);
+      if (!line) continue;
+      if (line.startsWith(":")) { labels.set(line.slice(1).trim(), cleaned.length); continue; }
+      cleaned.push(line);
+    }
+
+    function regIndex(r) {
+      const m = /^r([0-3])$/i.exec(r.trim());
+      if (!m) throw new Error("bad register " + r);
+      return parseInt(m[1],10);
+    }
+
+    const prog = [];
+    for (const raw of cleaned) {
+      const parts = raw.split(/\s+/);
+      const op = parts[0].toLowerCase();
+      const rest = raw.slice(parts[0].length).trim();
+      const a = rest.split(",").map(x=>x.trim()).filter(Boolean);
+
+      if (op === "mov") prog.push({op, r:regIndex(a[0]), v:a[1]});
+      else if (op === "add") prog.push({op, r:regIndex(a[0]), v:a[1]});
+      else if (op === "sub") prog.push({op, r:regIndex(a[0]), v:a[1]});
+      else if (op === "cmp_lt") prog.push({op, a:regIndex(a[0]), b:regIndex(a[1])});
+      else if (op === "jnz" || op === "jz") prog.push({op, label:a[0]});
+      else if (op === "out") prog.push({op, r:regIndex(a[0])});
+      else if (op === "hlt") prog.push({op});
+      else throw new Error(`unknown instruction '${op}' at: ${raw}`);
+    }
+
+    const R = new Int32Array(4);
+    let Z = 0;
+    let ip = 0;
+
+    function immOrReg(token) {
+      const t = (token ?? "").trim();
+      if (/^r[0-3]$/i.test(t)) return R[regIndex(t)];
+      if (/^-?\d+$/.test(t)) return parseInt(t,10)|0;
+      throw new Error("bad operand " + token);
+    }
+
+    const maxSteps = 5_000_000;
+    let steps = 0;
+
+    while (ip < prog.length) {
+      if (state.interrupted) { state.interrupted = false; return fail("asmrun: interrupted\n", 130); }
+      if (++steps > maxSteps) return fail("asmrun: step limit reached\n", 124);
+
+      const ins = prog[ip++];
+      if (ins.op === "mov") R[ins.r] = immOrReg(ins.v);
+      else if (ins.op === "add") {
+        const v = immOrReg(ins.v);
+        R[ins.r] = state.wasm.add ? (state.wasm.add(R[ins.r], v)|0) : ((R[ins.r] + v)|0);
+      } else if (ins.op === "sub") R[ins.r] = ((R[ins.r] - immOrReg(ins.v))|0);
+      else if (ins.op === "cmp_lt") Z = (R[ins.a] < R[ins.b]) ? 1 : 0;
+      else if (ins.op === "jnz") {
+        if (Z !== 0) { if (!labels.has(ins.label)) return fail(`asmrun: unknown label '${ins.label}'\n`); ip = labels.get(ins.label); }
+      } else if (ins.op === "jz") {
+        if (Z === 0) { if (!labels.has(ins.label)) return fail(`asmrun: unknown label '${ins.label}'\n`); ip = labels.get(ins.label); }
+      } else if (ins.op === "out") write(String(R[ins.r]) + "\n");
+      else if (ins.op === "hlt") break;
+    }
+    return ok("");
+  };
+
+  /* ---------- ghub get (public GitHub downloader) ---------- */
+  // Usage:
+  //   ghub get <url> [dest]
+  //
+  // Accepts:
+  //   https://github.com/owner/repo
+  //   https://github.com/owner/repo/tree/branch/path
+  //   https://github.com/owner/repo/blob/branch/path/to/file
+  //   owner/repo
+  //   owner/repo@branch
+  //   owner/repo@branch:path/to/dir-or-file
+  //
+  // Default dest:
+  //   /tmp/ghub/owner_repo[/path]
+  //
+  function parseGhubSpec(spec) {
+    spec = String(spec || "").trim();
+    if (!spec) throw new Error("missing url");
+
+    // owner/repo@branch:path
+    let owner=null, repo=null, ref=null, subpath="";
+
+    const mShort = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:@([^:]+))?(?::(.+))?$/.exec(spec);
+    if (mShort && !spec.startsWith("http")) {
+      owner = mShort[1]; repo = mShort[2]; ref = mShort[3] || null; subpath = mShort[4] || "";
+      return { owner, repo, ref, subpath };
+    }
+
+    // Full GitHub URL
+    let u;
+    try { u = new URL(spec); } catch { throw new Error("invalid github url"); }
+    if (u.hostname !== "github.com") throw new Error("only github.com urls supported");
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) throw new Error("url missing owner/repo");
+    owner = parts[0]; repo = parts[1];
+
+    // Patterns:
+    // /owner/repo
+    // /owner/repo/tree/branch/optional/path
+    // /owner/repo/blob/branch/path/to/file
+    if (parts.length >= 4 && (parts[2] === "tree" || parts[2] === "blob")) {
+      ref = parts[3] || null;
+      subpath = parts.slice(4).join("/");
+    } else {
+      ref = null;
+      subpath = "";
+    }
+
+    return { owner, repo, ref, subpath };
+  }
+
+  async function ghApiJson(url) {
+    const r = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Accept": "application/vnd.github+json"
+      }
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(()=> "");
+      if (r.status === 403) throw new Error("GitHub API blocked/rate-limited (HTTP 403)");
+      throw new Error(`GitHub API error (HTTP ${r.status})`);
+    }
+    return await r.json();
+  }
+
+  async function ghFetchText(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`download failed (HTTP ${r.status})`);
+    return await r.text();
+  }
+
+  async function ghDownloadContents(owner, repo, ref, subpath, destRoot) {
+    // Writes into Cedar FS under destRoot
+    // Uses GitHub Contents API recursively.
+    // API: /repos/{owner}/{repo}/contents/{path}?ref={ref}
+    const apiPath = subpath ? encodeURIComponent(subpath).replaceAll("%2F","/") : "";
+    const apiUrl =
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${apiPath}` +
+      (ref ? `?ref=${encodeURIComponent(ref)}` : "");
+
+    const data = await ghApiJson(apiUrl);
+
+    if (Array.isArray(data)) {
+      // directory listing
+      fsEnsureDir(destRoot);
+      for (const item of data) {
+        if (state.interrupted) throw new Error("interrupted");
+        if (item.type === "dir") {
+          const childDest = pathNormalize(destRoot + "/" + item.name);
+          await ghDownloadContents(owner, repo, ref, (subpath ? (subpath + "/") : "") + item.name, childDest);
+        } else if (item.type === "file") {
+          if (!item.download_url) continue;
+          const content = await ghFetchText(item.download_url);
+          fsEnsureDir(destRoot);
+          fsWriteFile(destRoot + "/" + item.name, content, false);
+        }
+      }
+      return { files: null };
+    } else {
+      // single file
+      if (data.type !== "file" || !data.download_url) throw new Error("unsupported github object type");
+      const content = await ghFetchText(data.download_url);
+      const destDir = destRoot.includes("/") ? destRoot.slice(0, destRoot.lastIndexOf("/")) : "/";
+      fsEnsureDir(destDir || "/");
+      fsWriteFile(destRoot, content, false);
+      return { files: 1 };
+    }
+  }
+
+  commands.ghub = async (argv) => {
+    const sub = argv[0];
+    if (sub !== "get") return fail("ghub: usage: ghub get <github-url> [dest]");
+    const spec = argv[1];
+    if (!spec) return fail("ghub: usage: ghub get <github-url> [dest]");
+
+    let owner, repo, ref, subpath;
+
+    try {
+      ({ owner, repo, ref, subpath } = parseGhubSpec(spec));
+    } catch (e) {
+      return fail(`ghub: ${e.message}`);
+    }
+
+
+    // Default dest
+    const safeRepo = `${owner}_${repo}`.replace(/[^A-Za-z0-9_.-]/g, "_");
+    let dest = argv[2] ? pathNormalize(argv[2]) : `/tmp/ghub/${safeRepo}${subpath ? "/" + subpath : ""}`;
+
+    // If spec points to a directory, dest should be a directory; if it points to file, dest may be file.
+    // We can't know up front without calling API; handle both:
+    writeln(`ghub: fetching ${owner}/${repo}${ref ? "@" + ref : ""}${subpath ? ":" + subpath : ""}`, "dim");
+    writeln(`ghub: -> ${dest}`, "dim");
+
+    try {
+      // Try directory/file via contents endpoint. If it is a file and dest ends with "/",
+      // write it into that directory using the github filename.
+      if (dest.endsWith("/")) dest = dest.slice(0, -1);
+      const res = await ghDownloadContents(owner, repo, ref, subpath, dest);
+
+      fsSave();
+      writeln("ghub: done", "ok");
+      return ok("");
+    } catch (e) {
+      if (String(e.message || e).includes("interrupted")) return fail("ghub: interrupted\n", 130);
+      return fail(`ghub: ${e.message ?? String(e)}`);
+    }
+  };
+
+  /* ---------- Command dispatcher ---------- */
+  async function execCommand(argv, stdin) {
+    const cmd = argv[0];
+    const args = argv.slice(1);
+    const fn = commands[cmd];
+    if (!fn) return fail(`${cmd}: command not found`);
+    try {
+      if (fn.length >= 2) return await fn(args, stdin);
+      return await fn(args);
+    } catch (e) {
+      return fail(`${cmd}: ${e.message ?? String(e)}`);
+    }
+  }
+
+  /* ---------- Completion ---------- */
+  function completeToken() {
+    const before = state.input.slice(0, state.cursor);
+    const tokens = tokenize(before);
+    if (!tokens.length) {
+      const all = Object.keys(commands).sort();
+      writeln(all.join("  "));
+      return;
+    }
+    const last = tokens[tokens.length - 1];
+    const isFirst = tokens.length === 1 && !before.endsWith(" ");
+    const prefix = last;
+
+    if (isFirst) {
+      const cands = Object.keys(commands).filter(c => c.startsWith(prefix)).sort();
+      if (!cands.length) return;
+      if (cands.length === 1) replaceLastToken(cands[0] + " ");
+      else writeln(cands.join("  "));
+      return;
+    }
+
+    const basePath = prefix.includes("/") ? prefix.slice(0, prefix.lastIndexOf("/")+1) : "";
+    const partial = prefix.includes("/") ? prefix.slice(prefix.lastIndexOf("/")+1) : prefix;
+    const dir = basePath ? basePath : ".";
+    let items = [];
+    try { items = fsList(dir); } catch { return; }
+    const cands = items.filter(n => n.startsWith(partial));
+    if (!cands.length) return;
+    if (cands.length === 1) {
+      const full = basePath + cands[0];
+      const st = fsGetNode(full);
+      replaceLastToken(full + (st && st.node.t === "dir" ? "/" : " "));
+    } else writeln(cands.join("  "));
+  }
+
+  function replaceLastToken(newTok) {
+    const before = state.input.slice(0, state.cursor);
+    const after = state.input.slice(state.cursor);
+    const tokens = tokenize(before);
+    if (!tokens.length) return;
+    const last = tokens[tokens.length - 1];
+    const idx = before.lastIndexOf(last);
+    if (idx === -1) return;
+    state.input = before.slice(0, idx) + newTok + after;
+    state.cursor = (before.slice(0, idx) + newTok).length;
+    renderInputLine();
+  }
+
+  /* ---------- Key handling ---------- */
+  screen.addEventListener("keydown", async (e) => {
+    if (e.key === "Tab") { e.preventDefault(); completeToken(); return; }
+
+    if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === "c") {
+        e.preventDefault();
+        state.interrupted = true;
+        if (state._liveRow) state._liveRow.textContent = escText(state.input);
+        writeln("^C");
+        state.input = "";
+        state.cursor = 0;
+        state._liveRow = null;
+        renderPrompt();
+        return;
+      }
+      if (k === "l") {
+        e.preventDefault();
+        clearScreen();
+        state._liveRow = null;
+        renderPrompt();
+        return;
+      }
+      if (k === "a") { e.preventDefault(); state.cursor = 0; renderInputLine(); return; }
+      if (k === "e") { e.preventDefault(); state.cursor = state.input.length; renderInputLine(); return; }
+    }
+
+    if (e.key === "ArrowLeft") { e.preventDefault(); if (state.cursor>0) state.cursor--; renderInputLine(); return; }
+    if (e.key === "ArrowRight") { e.preventDefault(); if (state.cursor<state.input.length) state.cursor++; renderInputLine(); return; }
+    if (e.key === "Home") { e.preventDefault(); state.cursor = 0; renderInputLine(); return; }
+    if (e.key === "End") { e.preventDefault(); state.cursor = state.input.length; renderInputLine(); return; }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!state.history.length) return;
+      if (state.histIndex === -1) state.histIndex = state.history.length - 1;
+      else state.histIndex = Math.max(0, state.histIndex - 1);
+      state.input = state.history[state.histIndex];
+      state.cursor = state.input.length;
+      renderInputLine();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!state.history.length) return;
+      if (state.histIndex === -1) return;
+      state.histIndex = Math.min(state.history.length, state.histIndex + 1);
+      if (state.histIndex === state.history.length) {
+        state.histIndex = -1;
+        state.input = "";
+      } else state.input = state.history[state.histIndex];
+      state.cursor = state.input.length;
+      renderInputLine();
+      return;
+    }
+
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      if (state.cursor > 0) {
+        state.input = state.input.slice(0, state.cursor-1) + state.input.slice(state.cursor);
+        state.cursor--;
+        renderInputLine();
+      }
+      return;
+    }
+    if (e.key === "Delete") {
+      e.preventDefault();
+      if (state.cursor < state.input.length) {
+        state.input = state.input.slice(0, state.cursor) + state.input.slice(state.cursor+1);
+        renderInputLine();
+      }
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const line = commitInputLine();
+      const trimmed = line.trimEnd();
+      if (trimmed.length) state.history.push(trimmed);
+      try { await runLine(trimmed); }
+      finally { renderPrompt(); }
+      return;
+    }
+
+    if (e.key.length === 1 && !e.metaKey && !e.altKey && !e.ctrlKey) {
+      e.preventDefault();
+      const ch = e.key;
+      state.input = state.input.slice(0, state.cursor) + ch + state.input.slice(state.cursor);
+      state.cursor += ch.length;
+      renderInputLine();
+      return;
+    }
+  });
+
+  screen.addEventListener("mousedown", () => setTimeout(()=>screen.focus(), 0));
+
+  function bootBanner() {
+    writeln("Cedar 0.1.0", "ok");
+    writeln("Type 'help' for commands.", "dim");
+    writeln("");
+  }
+
+  seedFsIfEmpty();
+  clearScreen();
+  bootBanner();
+  renderPrompt();
+  screen.focus();
+})();
+</script>
+</body>
+</html>
