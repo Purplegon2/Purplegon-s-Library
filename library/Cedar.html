@@ -23,7 +23,12 @@
       overflow:auto;
       outline:none;
       user-select:text;
+      /* allow native selection + clipboard */
     }
+    /* Hide scrollbar but keep scrolling */
+    #screen { scrollbar-width: none; }              /* Firefox */
+    #screen::-webkit-scrollbar { width: 0; height: 0; } /* Chromium/WebKit */
+
     .dim{color:var(--dim);}
     .err{color:var(--err);}
     .ok{color:var(--ok);}
@@ -67,7 +72,7 @@
   };
 
   function ps1() {
-    const w = state.cwd === state.env.HOME ? "~" : state.cwd;
+    const w = state.cwd;
     return state.env.PS1
       .replaceAll("%u", state.user)
       .replaceAll("%h", state.host)
@@ -126,6 +131,29 @@
     return full;
   }
 
+  /* ---------- Clipboard helpers (copy/paste) ---------- */
+  function hasSelection() {
+    const sel = window.getSelection();
+    return sel && !sel.isCollapsed && String(sel).length > 0;
+  }
+
+  async function pasteIntoInput(text) {
+    if (!text) return;
+    text = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    // For interactive input, treat newlines as spaces (keeps it predictable)
+    text = text.replace(/\n/g, " ");
+    state.input = state.input.slice(0, state.cursor) + text + state.input.slice(state.cursor);
+    state.cursor += text.length;
+    renderInputLine();
+  }
+
+  async function tryReadClipboardText() {
+    try {
+      if (navigator.clipboard?.readText) return await navigator.clipboard.readText();
+    } catch {}
+    return null;
+  }
+
   /* ---------- Virtual Filesystem ---------- */
   function mkDir(name, mode=0o755, owner="root") {
     return { t:"dir", name, mode, owner, kids: new Map(), mtime: Date.now() };
@@ -159,12 +187,14 @@
     });
     return d;
   }
+
+  // Switch persistence to sessionStorage (clears when tab/browser session ends)
   function fsSave() {
-    try { localStorage.setItem(FS_KEY, JSON.stringify(serializeNode(fs.root))); } catch {}
+    try { sessionStorage.setItem(FS_KEY, JSON.stringify(serializeNode(fs.root))); } catch {}
   }
   function fsLoad() {
     try {
-      const raw = localStorage.getItem(FS_KEY);
+      const raw = sessionStorage.getItem(FS_KEY);
       if (!raw) return false;
       fs.root = deserializeNode(JSON.parse(raw));
       return true;
@@ -298,14 +328,14 @@
 `Cedar (browser) terminal OS
 - Type 'help' for commands.
 - Try: ls; cat README.txt
-- Scripting: cedar command file <file>
+- Scripting: execute <file>   or   run <file.ced>
 - ASM: asmrun <file>
 - GitHub install: ghub get <github-url> [dest]
 
-Persistence: localStorage (same browser profile).
+Persistence: sessionStorage (clears when this tab/session ends).
 `, false);
 
-    fsWriteFile("/home/guest/loop.ccf",
+    fsWriteFile("/home/guest/loop.ced",
 `# cedar command file example: prints numbers 1..10
 set i 1
 :top
@@ -327,7 +357,6 @@ echo hello > test/hi.txt
 cat test/hi.txt
 echo done
 `, false);
-
 
     fsWriteFile("/home/guest/demo.asm",
 `; demo.asm (Cedar tiny-asm)
@@ -477,6 +506,7 @@ hlt
   grep, find, head, tail, wc
   export, set, unset
   execute <file>     (Turing-complete command scripting)
+  run <file.ced>     (shell-style script; one command per line)
   asmrun <file>      (runs tiny-asm; uses WebAssembly for core arithmetic)
   ghub get <url> [dest]   (download public GitHub repo/path into Cedar FS)
   reboot             (reloads Cedar), resetfs (clears Cedar filesystem)
@@ -489,6 +519,7 @@ Shell features:
 Shortcuts:
   Ctrl+C interrupt   Ctrl+L clear   Ctrl+A/E start/end
   Up/Down history    Tab completion
+  Ctrl+V paste into input (if browser allows)
 `);
 
   commands.clear = async () => { clearScreen(); return ok(""); };
@@ -751,13 +782,6 @@ Shortcuts:
     return ok("");
   };
 
-    // run: execute a Cedar script (.ced)
-  // Syntax:
-  //   run <file>
-  // Script format:
-  //   - one command line per line
-  //   - blank lines allowed
-  //   - comments start with # (to end of line)
   commands.run = async (argv) => {
     if (!argv.length) return fail("run: usage: run <file.ced>");
     let src;
@@ -765,22 +789,13 @@ Shortcuts:
     catch (e) { return fail(`run: ${argv[0]}: ${e.message}`); }
 
     const lines = src.replace(/\r\n/g, "\n").split("\n");
-    let status = 0;
-
     for (let i = 0; i < lines.length; i++) {
       if (state.interrupted) { state.interrupted = false; return fail("run: interrupted\n", 130); }
-
-      // strip comments
       const line = lines[i].replace(/#.*/, "").trim();
       if (!line) continue;
-
-      status = await runLine(line);
+      const status = await runLine(line);
       state.lastStatus = status;
-
-      // optional: stop on error like "set -e"
-      // if (status !== 0) return fail(`run: failed at line ${i+1}\n`, status);
     }
-
     return ok("");
   };
 
@@ -792,7 +807,13 @@ Shortcuts:
   commands.unset = async (argv) => { for (const k of argv) delete state.env[k]; return ok(""); };
 
   commands.reboot = async () => { location.reload(); return ok(""); };
-  commands.resetfs = async () => { localStorage.removeItem(FS_KEY); seedFsIfEmpty(); return ok("filesystem reset\n"); };
+
+  // resetfs must clear sessionStorage now
+  commands.resetfs = async () => {
+    try { sessionStorage.removeItem(FS_KEY); } catch {}
+    seedFsIfEmpty();
+    return ok("filesystem reset\n");
+  };
 
   /* ---------- cedar command file (Turing-complete script runner) ---------- */
   commands.execute = async (argv) => {
@@ -964,25 +985,10 @@ Shortcuts:
   };
 
   /* ---------- ghub get (public GitHub downloader) ---------- */
-  // Usage:
-  //   ghub get <url> [dest]
-  //
-  // Accepts:
-  //   https://github.com/owner/repo
-  //   https://github.com/owner/repo/tree/branch/path
-  //   https://github.com/owner/repo/blob/branch/path/to/file
-  //   owner/repo
-  //   owner/repo@branch
-  //   owner/repo@branch:path/to/dir-or-file
-  //
-  // Default dest:
-  //   /tmp/ghub/owner_repo[/path]
-  //
   function parseGhubSpec(spec) {
     spec = String(spec || "").trim();
     if (!spec) throw new Error("missing url");
 
-    // owner/repo@branch:path
     let owner=null, repo=null, ref=null, subpath="";
 
     const mShort = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:@([^:]+))?(?::(.+))?$/.exec(spec);
@@ -991,7 +997,6 @@ Shortcuts:
       return { owner, repo, ref, subpath };
     }
 
-    // Full GitHub URL
     let u;
     try { u = new URL(spec); } catch { throw new Error("invalid github url"); }
     if (u.hostname !== "github.com") throw new Error("only github.com urls supported");
@@ -999,10 +1004,6 @@ Shortcuts:
     if (parts.length < 2) throw new Error("url missing owner/repo");
     owner = parts[0]; repo = parts[1];
 
-    // Patterns:
-    // /owner/repo
-    // /owner/repo/tree/branch/optional/path
-    // /owner/repo/blob/branch/path/to/file
     if (parts.length >= 4 && (parts[2] === "tree" || parts[2] === "blob")) {
       ref = parts[3] || null;
       subpath = parts.slice(4).join("/");
@@ -1017,12 +1018,9 @@ Shortcuts:
   async function ghApiJson(url) {
     const r = await fetch(url, {
       method: "GET",
-      headers: {
-        "Accept": "application/vnd.github+json"
-      }
+      headers: { "Accept": "application/vnd.github+json" }
     });
     if (!r.ok) {
-      const txt = await r.text().catch(()=> "");
       if (r.status === 403) throw new Error("GitHub API blocked/rate-limited (HTTP 403)");
       throw new Error(`GitHub API error (HTTP ${r.status})`);
     }
@@ -1036,9 +1034,6 @@ Shortcuts:
   }
 
   async function ghDownloadContents(owner, repo, ref, subpath, destRoot) {
-    // Writes into Cedar FS under destRoot
-    // Uses GitHub Contents API recursively.
-    // API: /repos/{owner}/{repo}/contents/{path}?ref={ref}
     const apiPath = subpath ? encodeURIComponent(subpath).replaceAll("%2F","/") : "";
     const apiUrl =
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${apiPath}` +
@@ -1047,7 +1042,6 @@ Shortcuts:
     const data = await ghApiJson(apiUrl);
 
     if (Array.isArray(data)) {
-      // directory listing
       fsEnsureDir(destRoot);
       for (const item of data) {
         if (state.interrupted) throw new Error("interrupted");
@@ -1063,7 +1057,6 @@ Shortcuts:
       }
       return { files: null };
     } else {
-      // single file
       if (data.type !== "file" || !data.download_url) throw new Error("unsupported github object type");
       const content = await ghFetchText(data.download_url);
       const destDir = destRoot.includes("/") ? destRoot.slice(0, destRoot.lastIndexOf("/")) : "/";
@@ -1087,22 +1080,15 @@ Shortcuts:
       return fail(`ghub: ${e.message}`);
     }
 
-
-    // Default dest
     const safeRepo = `${owner}_${repo}`.replace(/[^A-Za-z0-9_.-]/g, "_");
     let dest = argv[2] ? pathNormalize(argv[2]) : `/tmp/ghub/${safeRepo}${subpath ? "/" + subpath : ""}`;
 
-    // If spec points to a directory, dest should be a directory; if it points to file, dest may be file.
-    // We can't know up front without calling API; handle both:
     writeln(`ghub: fetching ${owner}/${repo}${ref ? "@" + ref : ""}${subpath ? ":" + subpath : ""}`, "dim");
     writeln(`ghub: -> ${dest}`, "dim");
 
     try {
-      // Try directory/file via contents endpoint. If it is a file and dest ends with "/",
-      // write it into that directory using the github filename.
       if (dest.endsWith("/")) dest = dest.slice(0, -1);
-      const res = await ghDownloadContents(owner, repo, ref, subpath, dest);
-
+      await ghDownloadContents(owner, repo, ref, subpath, dest);
       fsSave();
       writeln("ghub: done", "ok");
       return ok("");
@@ -1178,9 +1164,20 @@ Shortcuts:
   screen.addEventListener("keydown", async (e) => {
     if (e.key === "Tab") { e.preventDefault(); completeToken(); return; }
 
+    // Let the browser handle native copy when there's a selection.
+    // For paste, we provide Ctrl+V to paste into the Cedar input buffer.
     if (e.ctrlKey && !e.shiftKey && !e.altKey) {
       const k = e.key.toLowerCase();
+
+      if (k === "v") {
+        e.preventDefault();
+        const txt = await tryReadClipboardText();
+        if (txt != null) await pasteIntoInput(txt);
+        return;
+      }
+
       if (k === "c") {
+        if (hasSelection()) return; // allow native copy
         e.preventDefault();
         state.interrupted = true;
         if (state._liveRow) state._liveRow.textContent = escText(state.input);
@@ -1191,6 +1188,7 @@ Shortcuts:
         renderPrompt();
         return;
       }
+
       if (k === "l") {
         e.preventDefault();
         clearScreen();
@@ -1198,6 +1196,7 @@ Shortcuts:
         renderPrompt();
         return;
       }
+
       if (k === "a") { e.preventDefault(); state.cursor = 0; renderInputLine(); return; }
       if (k === "e") { e.preventDefault(); state.cursor = state.input.length; renderInputLine(); return; }
     }
@@ -1266,6 +1265,17 @@ Shortcuts:
       state.cursor += ch.length;
       renderInputLine();
       return;
+    }
+  });
+
+  // Also support paste via context-menu / Shift+Insert / browser paste events
+  screen.addEventListener("paste", async (e) => {
+    // If user is selecting output text, let normal paste happen elsewhere.
+    // For Cedar, we paste into the input buffer.
+    const txt = e.clipboardData?.getData("text/plain");
+    if (txt) {
+      e.preventDefault();
+      await pasteIntoInput(txt);
     }
   });
 
