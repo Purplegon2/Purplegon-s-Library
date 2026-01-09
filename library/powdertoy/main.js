@@ -122,42 +122,28 @@ class Sandbox {
         if (dx*dx + dy*dy > r2) continue;
         if (!this.inb(x, y)) continue;
         const i = this.idx(x, y);
+
         if (mode === "erase") {
+          // remove material and any entity at that cell
           this.mat[i] = 0;
           this.temp[i] = this.ambientT;
-        } else if (mode === "paint") {
-          // If material is an entity (like neutron), spawn entities instead of placing in grid
-          const m = this.getMat(matId);
-          if (m && m.entity) {
-            // spawn an entity at this cell
-            this.entities.push({ x, y, matId, age: 0, life: (m.behaviorParams && m.behaviorParams.lifetime) || 600 });
-          } else {
-            this.mat[i] = matId;
-            // Allow explicit default temperature on the material to override placement heuristics
-            if (m && m.defaultTemp != null) {
-              this.temp[i] = m.defaultTemp;
-            } else {
-              // Set a sensible default temperature so painted material starts in the appropriate phase
-              // Liquids: place above their freezeTemp (if defined)
-              if (m.state === "liquid") {
-                if (m.freezeTemp != null) this.temp[i] = m.freezeTemp + 20;
-                else if (m.meltTemp != null) this.temp[i] = m.meltTemp + 20;
-                else this.temp[i] = this.ambientT + 20;
-              }
-              // Gases: place above their condenseTemp (if defined) or significantly hotter than ambient
-              else if (m.state === "gas") {
-                if (m.condenseTemp != null) this.temp[i] = m.condenseTemp + 20;
-                else this.temp[i] = this.ambientT + 40;
-              }
-              // Solids: place slightly below their meltTemp (if defined) so they remain solid
-              else if (m.state === "solid") {
-                if (m.meltTemp != null) this.temp[i] = m.meltTemp - 5;
-                else this.temp[i] = this.ambientT;
-              }
-            }
-            // Small random jitter remains for visual variety
-            this.temp[i] += (Math.random() - 0.5) * 0.2;
+          for (let ei = this.entities.length - 1; ei >= 0; ei--) {
+            const e = this.entities[ei];
+            if (Math.floor(e.x) === x && Math.floor(e.y) === y) this.entities.splice(ei, 1);
           }
+          this.updated[i] = 1;
+        } else if (mode === "paint") {
+          this.mat[i] = matId;
+          const m = this.getMat(matId);
+          if (m && m.defaultTemp != null) this.temp[i] = m.defaultTemp;
+          // spawn an entity if this material defines a behavior (e.g., neutron/emitter)
+          if (m && m.behavior) {
+            const life = (m.behaviorParams && Number(m.behaviorParams.lifetime)) || 0;
+            const ent = { x, y, matId: m.id, age: 0 };
+            if (life > 0) ent.life = life;
+            this.entities.push(ent);
+          }
+          this.updated[i] = 1;
         } else if (mode === "heat") {
           this.temp[i] += 6 * intensity;
         } else if (mode === "cool") {
@@ -320,9 +306,9 @@ class Sandbox {
     const mA = this.getMat(idA);
     const mB = this.getMat(idB);
 
-    // Prevent any movement that would displace rigid solids.
-    // Solids are treated as immovable - do not allow swaps or moves involving solids.
-    if ((mA && mA.state === "solid") || (mB && mB.state === "solid")) return false;
+    // Prevent any movement that would displace rigid solids or explicitly immovable materials.
+    // Use per-material `immovable` flag instead of treating all `nuclear` as immovable.
+    if ((mA && (mA.state === "solid" || mA.immovable)) || (mB && (mB.state === "solid" || mB.immovable))) return false;
 
     // Empty target
     if (idB === 0) {
@@ -736,94 +722,166 @@ Sandbox.behaviors.neutron = function(ctx) {
   const ent = ctx.ent;
   const params = ctx.params || {};
 
-  // movement with optional gravity influence
+  // movement: random walk with optional gravity/slowdown
   const speed = Math.max(1, params.speed || 1);
-  // horizontal step: -1/0/1 with slight spread
   const hx = Math.random();
   let dx = 0;
-  if (hx < 0.4) dx = -1;
-  else if (hx > 0.6) dx = 1;
-
-  // vertical step: if affected by gravity favor downward movement
+  if (hx < 0.45) dx = -1;
+  else if (hx > 0.55) dx = 1;
   let dy = 0;
-  const gravityBias = params.affectedByGravity ? 0.6 : 0.35;
   const r = Math.random();
-  if (r < 0.12) dy = -1;
-  else if (r < 0.12 + gravityBias) dy = 1;
-  else dy = 0;
+  if (params.affectedByGravity) {
+    if (r < 0.12) dy = -1;
+    else if (r < 0.72) dy = 1;
+    else dy = 0;
+  } else {
+    if (r < 0.35) dy = -1;
+    else if (r < 0.70) dy = 1;
+    else dy = 0;
+  }
 
   const nx = clamp(ent.x + dx * speed, 0, sim.w - 1);
   const ny = clamp(ent.y + dy * speed, 0, sim.h - 1);
+  ent.x = nx; ent.y = ny;
 
-  ent.x = nx;
-  ent.y = ny;
-
-  // if inside a non-air cell, chance to be absorbed: raise that cell temp by 1°C and destroy entity
+  // check cell interactions
   const idx = sim.idx(ent.x, ent.y);
   const matId = sim.mat[idx];
-  if (matId !== 0) {
-    const absorb = Math.random() < (params.absorbChance ?? 0.05);
-    if (absorb) {
-      // material touched
-      const targetMat = sim.getMat(matId);
-      // default heating
-      sim.temp[idx] += 1.0;
+  if (matId === 0) return; // through air
 
-      // Nuclear interactions: plutonium/uranium amplify heat based on local pressure and may fission
-      if (targetMat && targetMat.nuclear && targetMat.fissionOnNeutron) {
-        const p = sim.press[idx] || 0;
-        // exponential-ish heating from pressure
-        const factor = targetMat.fissionTempMult || 1.5;
-        const extra = Math.min(200, Math.exp(Math.min(6, p * factor)));
-        sim.temp[idx] += extra;
+  const targetMat = sim.getMat(matId);
+  // default small heat on touch
+  sim.temp[idx] += 1.0;
 
-        // spawn exactly two neutrons nearby
-        for (let k = 0; k < 2; k++) {
-          const rx = clamp(ent.x + (Math.floor(Math.random()*3) - 1), 0, sim.w - 1);
-          const ry = clamp(ent.y + (Math.floor(Math.random()*3) - 1), 0, sim.h - 1);
-          sim.entities.push({ x: rx, y: ry, matId: 9, age: 0, life: 300 });
-        }
-
-        // Replace the fissile pixel with a molten variant that stays very hot and will decay into stone
-        let moltenName = targetMat.name === 'Plutonium' ? 'Molten Plutonium' : 'Molten Uranium';
-        const moltenMat = sim.materials.find(mm => mm.name === moltenName);
-        if (moltenMat) {
-          sim.mat[idx] = moltenMat.id;
-          // Boost the cell temperature significantly but not so high that it instantly becomes Fire
-          // Keep it hot but rely on molten material's heatCapacity/conductivity to retain heat
-          sim.temp[idx] = Math.max(sim.temp[idx], (targetMat.criticalTemp || 600) * 1.15 + 80);
-          // modest pressure increase
-          sim.press[idx] = (sim.press[idx] || 0) + 4.0;
-
-          // nudge neighbors' temperature and pressure mildly
-          for (let ny = Math.max(0, ent.y-1); ny <= Math.min(sim.h-1, ent.y+1); ny++) {
-            for (let nx = Math.max(0, ent.x-1); nx <= Math.min(sim.w-1, ent.x+1); nx++) {
-              const ii = sim.idx(nx, ny);
-              if (ii === idx) continue;
-              sim.temp[ii] += 18 * (1 - (Math.abs(nx-ent.x)+Math.abs(ny-ent.y))/4);
-              sim.press[ii] = (sim.press[ii] || 0) + 1.0;
-            }
-          }
-        } else {
-          // fallback: clear cell
-          sim.mat[idx] = 0;
-        }
-      }
-
-      // Gunpowder / explosive interactions handled by applyChemistry normally
-
-      // remove entity
-      const ei = ctx.ei;
-      if (ei != null && sim.entities[ei] === ent) sim.entities.splice(ei, 1);
-      // explosive materials: immediate reaction when hit by neutron
-      if (targetMat && targetMat.explosive) {
-        // additional heating
-        sim.temp[idx] += (targetMat.explodeHeatBoost ?? 40);
-        if (sim.temp[idx] >= (targetMat.explodeTemp || 280)) {
-          sim.triggerExplosion(ent.x, ent.y, { radius: targetMat.explosionRadius ?? 5, strength: targetMat.explosionStrength ?? 12 });
-        }
-      }
+  // Reflector: bounce neutrons
+  if (targetMat && targetMat.neutronReflector) {
+    if (Math.random() < (targetMat.reflectProb || 0.5)) {
+      // reverse and damp velocity by random factor
+      ent.x = clamp(ent.x - dx, 0, sim.w-1);
+      ent.y = clamp(ent.y - dy, 0, sim.h-1);
       return;
+    }
+  }
+
+  // Absorber: strong chance of capture and conversion to heat
+  if (targetMat && targetMat.neutronAbsorber) {
+    const baseAbs = 0.05;
+    const mult = targetMat.absorbMultiplier || 6;
+    if (Math.random() < Math.min(0.99, baseAbs * mult)) {
+      sim.temp[idx] += 6;
+      // remove neutron
+      const ei = ctx.ei; if (ei != null && sim.entities[ei] === ent) sim.entities.splice(ei,1);
+      return;
+    } else {
+      // slow it down
+      return;
+    }
+  }
+
+  // Moderator slows and warms slightly
+  if (targetMat && targetMat.moderator) {
+    sim.temp[idx] += (targetMat.moderatorHeat || 0.5);
+    // small chance to capture
+    if (Math.random() < 0.02) { const ei = ctx.ei; if (ei != null && sim.entities[ei] === ent) sim.entities.splice(ei,1); return; }
+  }
+
+  // Deuterium handling: mostly heat, sometimes split into neutrons
+  if (targetMat && targetMat.deuterium) {
+    if (Math.random() < 0.7) {
+      sim.temp[idx] += 10;
+    } else {
+      const nid = sim.materialsByName && sim.materialsByName['Neutron'] ? sim.materialsByName['Neutron'].id : 9;
+      for (let k=0;k<2;k++) {
+        const rx = clamp(ent.x + (Math.floor(Math.random()*3)-1), 0, sim.w-1);
+        const ry = clamp(ent.y + (Math.floor(Math.random()*3)-1), 0, sim.h-1);
+        sim.entities.push({ x: rx, y: ry, matId: nid, age: 0, life: 300 });
+      }
+      sim.temp[idx] += 4.0;
+      sim.mat[idx] = 0; // consume
+      sim.press[idx] = (sim.press[idx] || 0) + 0.5;
+    }
+    const ei = ctx.ei; if (ei != null && sim.entities[ei] === ent) sim.entities.splice(ei,1);
+    return;
+  }
+
+  // Fissile materials: chance to fission and spawn neutrons
+  if (targetMat && targetMat.nuclear && targetMat.fissionOnNeutron) {
+    let base = targetMat.fissionChance || 0.015;
+    if (params.moderated) base *= 1.4;
+    if (Math.random() < base) {
+      // replace with molten if available
+      if (targetMat.moltenId != null) sim.mat[idx] = targetMat.moltenId;
+      // spawn neutrons
+      const nid = sim.materialsByName && sim.materialsByName['Neutron'] ? sim.materialsByName['Neutron'].id : 9;
+      const minY = targetMat.fissionYieldMin || 1;
+      const maxY = targetMat.fissionYieldMax || (minY+2);
+      const nspawn = minY + Math.floor(Math.random()*(maxY-minY+1));
+      for (let k=0;k<nspawn;k++) {
+        sim.entities.push({ x: ent.x + (Math.random()-0.5), y: ent.y + (Math.random()-0.5), matId: nid, age: 0, life: 300 });
+      }
+      sim.temp[idx] += 40;
+      sim.press[idx] = (sim.press[idx] || 0) + 4.0;
+      // nudge neighbors
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        const xx = clamp(ent.x+ox,0,sim.w-1), yy = clamp(ent.y+oy,0,sim.h-1);
+        const ii = sim.idx(xx,yy); if (ii === idx) continue;
+        sim.temp[ii] += 8 * (1 - (Math.abs(ox)+Math.abs(oy))/4);
+        sim.press[ii] = (sim.press[ii] || 0) + 1.0;
+      }
+      const ei = ctx.ei; if (ei != null && sim.entities[ei] === ent) sim.entities.splice(ei,1);
+      return;
+    }
+  }
+
+  // Explosive materials trigger via applyChemistry, but still remove neutron
+  if (targetMat && targetMat.explosive) {
+    sim.temp[idx] += (targetMat.explodeHeatBoost ?? 40);
+    if (sim.temp[idx] >= (targetMat.explodeTemp || 280)) sim.triggerExplosion(ent.x, ent.y, { radius: targetMat.explosionRadius ?? 5, strength: targetMat.explosionStrength ?? 12 });
+  }
+
+  // default: remove neutron after touching non-air unless reflected/slowed above
+  const ei = ctx.ei; if (ei != null && sim.entities[ei] === ent) sim.entities.splice(ei,1);
+};
+
+// Emitter behavior: when spawned (entity), finds the first non-air material adjacent
+// and then places that material in a ring around itself every tick.
+Sandbox.behaviors.emitter = function(ctx) {
+  const sim = ctx.sim;
+  const ent = ctx.ent;
+  // store selected target material id on the entity instance
+  if (ent._targetMat == null) {
+    // scan 8 neighbors for first non-air material
+    for (let oy = -1; oy <= 1; oy++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        if (ox === 0 && oy === 0) continue;
+        const nx = clamp(ent.x + ox, 0, sim.w - 1);
+        const ny = clamp(ent.y + oy, 0, sim.h - 1);
+        const midx = sim.idx(nx, ny);
+        const mid = sim.mat[midx];
+        if (mid !== 0) { ent._targetMat = mid; break; }
+      }
+      if (ent._targetMat != null) break;
+    }
+  }
+
+  // If no target yet, do nothing
+  if (ent._targetMat == null) return;
+
+  // place target material in a ring (8 neighbors). Only place into air cells.
+  for (let oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      if (ox === 0 && oy === 0) continue;
+      const nx = ent.x + ox;
+      const ny = ent.y + oy;
+      if (!sim.inb(nx, ny)) continue;
+      const ii = sim.idx(nx, ny);
+      if (sim.mat[ii] === 0) {
+        sim.mat[ii] = ent._targetMat;
+        // set temperature to the material's default or a small nudge
+        const m = sim.getMat(ent._targetMat);
+        sim.temp[ii] = (m && m.defaultTemp != null) ? m.defaultTemp : sim.ambientT + 10;
+        sim.updated[ii] = 1;
+      }
     }
   }
 };
@@ -881,42 +939,51 @@ function buildUI(sim) {
   let currentCategory = null;
 
   function refreshCategories() {
-    // derive categories from states present
-    const states = Array.from(new Set(sim.materials.map(m => m.state)));
+    // derive categories from material `category` property or fallback to `state`
+    const categories = Array.from(new Set(sim.materials.map(m => m.category || m.state)));
     categoryList.innerHTML = "";
-    for (const s of states) {
+    for (const c of categories) {
       const btn = document.createElement("button");
       btn.className = "category-btn";
-      btn.textContent = String(s).toUpperCase();
-      const col = CATEGORY_COLORS[s] || CATEGORY_COLORS.default;
+      btn.textContent = String(c).toUpperCase();
+      const col = CATEGORY_COLORS[c] || CATEGORY_COLORS.default;
       btn.style.color = col;
       btn.style.borderColor = col;
-      btn.dataset.state = s;
+      btn.dataset.cat = c;
       btn.addEventListener("click", () => {
-        selectCategory(s);
+        selectCategory(c);
       });
       categoryList.appendChild(btn);
     }
     // auto-select first
-    if (!currentCategory && states.length) currentCategory = states[0];
+    if (!currentCategory && categories.length) currentCategory = categories[0];
     selectCategory(currentCategory);
   }
 
   function selectCategory(state) {
     currentCategory = state;
-    for (const b of categoryList.children) b.classList.toggle("selected", b.dataset.state === state);
+    for (const b of categoryList.children) b.classList.toggle("selected", b.dataset.cat === state);
     refreshMaterialsGrid(state);
   }
 
   function refreshMaterialsGrid(state) {
     materialsGrid.innerHTML = "";
-    const mats = sim.materials.filter(m => m.state === state);
+    const mats = sim.materials.filter(m => (m.category || m.state) === state);
     for (const m of mats) {
       const p = document.createElement("button");
       p.className = "material-pill";
       p.textContent = (m.short || m.name).toUpperCase().slice(0,4);
       p.title = `${m.id}: ${m.name}`;
       p.dataset.id = String(m.id);
+      // color the pill using the material color and pick contrasting text color
+      try {
+        if (m.color) {
+          p.style.backgroundColor = m.color;
+          const rgb = hexToRgb(m.color || '#000');
+          const lum = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b);
+          p.style.color = lum > 160 ? '#000' : '#fff';
+        }
+      } catch (e) {}
       p.addEventListener("click", () => {
         matSelect.value = String(m.id);
         // trigger UI updates
@@ -1146,6 +1213,66 @@ function buildUI(sim) {
   }
   requestAnimationFrame(uiTick);
 
+  // Keybindings: 1=regular, 2=fancy, 3=temperature view, 4=pressure view
+  window.addEventListener('keydown', (ev) => {
+    // ignore when typing in inputs/textareas
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+
+    // display mode keys
+    if (ev.key === '1') {
+      sim.displayMode = 'regular';
+      if (displayMode) displayMode.value = 'regular';
+      sim.showTemp = false; sim.showPressure = false; if (showTemp) showTemp.checked = false; if (showPressure) showPressure.checked = false;
+      return;
+    }
+    if (ev.key === '2') {
+      sim.displayMode = 'fancy';
+      if (displayMode) displayMode.value = 'fancy';
+      sim.showTemp = false; sim.showPressure = false; if (showTemp) showTemp.checked = false; if (showPressure) showPressure.checked = false;
+      return;
+    }
+    if (ev.key === '3') {
+      sim.displayMode = 'regular';
+      if (displayMode) displayMode.value = 'regular';
+      sim.showTemp = true; sim.showPressure = false; if (showTemp) showTemp.checked = true; if (showPressure) showPressure.checked = false;
+      return;
+    }
+    if (ev.key === '4') {
+      sim.displayMode = 'regular';
+      if (displayMode) displayMode.value = 'regular';
+      sim.showTemp = false; sim.showPressure = true; if (showTemp) showTemp.checked = false; if (showPressure) showPressure.checked = true;
+      return;
+    }
+
+    // Category/material navigation
+    if (ev.key === 'ArrowUp') {
+      // cycle to next category
+      const cats = Array.from(categoryList.children);
+      if (!cats.length) return;
+      const curIdx = cats.findIndex(b => b.classList.contains('selected'));
+      const next = cats[(curIdx + 1 + cats.length) % cats.length];
+      if (next) next.click();
+      ev.preventDefault();
+      return;
+    }
+
+    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+      // move selection among materials in current category
+      const pills = Array.from(materialsGrid.children);
+      if (!pills.length) return;
+      const cur = pills.findIndex(p => p.classList.contains('sel'));
+      let idx = cur;
+      if (idx === -1) idx = 0; // fallback
+      if (ev.key === 'ArrowLeft') idx = (idx - 1 + pills.length) % pills.length;
+      else idx = (idx + 1) % pills.length;
+      const target = pills[idx];
+      if (target) target.click();
+      ev.preventDefault();
+      return;
+    }
+  });
+
   return {
     get brushRadius() { return Number(brushSize.value); },
     get selectedMat() { return Number(matSelect.value); },
@@ -1190,6 +1317,23 @@ function attachInput(sim, ui) {
   });
 
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Wheel to change brush size
+  canvas.addEventListener('wheel', (ev) => {
+    // ignore when typing in inputs/textareas
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    ev.preventDefault();
+    const bs = document.getElementById('brushSize');
+    if (!bs) return;
+    const delta = Math.sign(ev.deltaY) * -1; // wheel up -> increase
+    let val = Number(bs.value) || 1;
+    val = clamp(val + delta, Number(bs.min) || 1, Number(bs.max) || 12);
+    bs.value = String(val);
+    // update labels if the UI helper exists
+    const evInput = new Event('input', { bubbles: true });
+    bs.dispatchEvent(evInput);
+  }, { passive: false });
 
   canvas.addEventListener("mousedown", (ev) => {
     down = true;
