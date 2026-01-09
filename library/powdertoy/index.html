@@ -2,16 +2,38 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
   <title>Powder Sandbox (Pressure + Temperature)</title>
   <link rel="stylesheet" href="style.css" />
+  
+  <style>
+    /* This makes the entire page unselectable */
+    html, body {
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      
+      /* Prevents 'ghosting' images or elements when dragging the mouse */
+      -webkit-user-drag: none;
+      
+      /* Essential for mobile: stops the browser from intercepting touches for scrolling */
+      touch-action: none;
+      
+      /* Keeps the cursor as a pointer instead of a text I-beam */
+      cursor: default;
+    }
+
+    /* OPTIONAL: Allow the Export JSON box to still be selectable so users can copy their data */
+    #exportBox {
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
+    }
+  </style>
 </head>
-<body{user-select: none;
-    /* Vendor prefixes for cross-browser compatibility (optional for modern browsers) */
-    -webkit-user-select: none; /* Safari, Chrome, Opera */
-    -khtml-user-select: none;  /* Konqueror HTML */
-    -moz-user-select: none;    /* Firefox */
-    -ms-user-select: none;     /* Internet Explorer/Edge */}>
+
+<body>
   
   <div id="app">
     <aside id="panel">
