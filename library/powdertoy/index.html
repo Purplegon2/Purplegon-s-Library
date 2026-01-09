@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Powder Sandbox (Pressure + Temperature)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <div class="group">
+        <div class="gtitle">Brush</div>
+        <div class="row">
+          <label>Material</label>
+          <select id="matSelect" style="display:none"></select>
+        </div>
+        <div class="row">
+          <label>Size</label>
+          <input id="brushSize" type="range" min="1" max="12" value="5" />
+          <span id="brushSizeVal" class="mono"></span>
+        </div>
+        <div class="row small">
+          <div class="hint">
+            LMB paint • RMB erase • Shift = heat • Alt = cool
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">Simulation</div>
+        <div class="row">
+          <button id="pauseBtn">Pause</button>
+          <button id="stepBtn">Step</button>
+          <button id="clearBtn">Clear</button>
+        </div>
+        <div class="row">
+          <label>Speed</label>
+          <input id="speed" type="range" min="1" max="8" value="4" />
+          <span id="speedVal" class="mono"></span>
+        </div>
+        <div class="row">
+          <label>Gravity</label>
+          <input id="gravity" type="range" min="0" max="200" value="110" />
+          <span id="gravityVal" class="mono"></span>
+        </div>
+        <div class="row">
+          <label>Ambient °C</label>
+          <input id="ambientT" type="number" step="1" value="20" />
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">View</div>
+        <div class="row">
+          <label class="chk"><input id="showTemp" type="checkbox" /> Temperature overlay</label>
+        </div>
+        <div class="row">
+          <label class="chk"><input id="showPressure" type="checkbox" /> Pressure overlay</label>
+        </div>
+        <div class="row">
+          <label>Display Mode</label>
+          <select id="displayMode">
+            <option value="regular">Regular</option>
+            <option value="fancy">Fancy (bloom)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Overlay strength</label>
+          <input id="overlay" type="range" min="0" max="100" value="55" />
+          <span id="overlayVal" class="mono"></span>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">Material settings</div>
+        <div class="row small">
+          <div class="hint">Edit the selected material. Changes apply immediately.</div>
+        </div>
+        <div id="matEditor" class="editor"></div>
+        <div class="row">
+          <button id="exportBtn">Export materials JSON</button>
+          <button id="resetBtn" class="ghost">Reset presets</button>
+        </div>
+        <textarea id="exportBox" spellcheck="false" class="mono" placeholder="Exported JSON appears here (copy/paste)."></textarea>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">Notes</div>
+        <div class="row small">
+          <div class="hint">
+            This is a toy simulation (not physically accurate). Pressure is a derived field from gas concentration and diffusion; temperature diffuses and drives phase changes.
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main id="stage">
+      <div id="topbar">
+        <div class="mono" id="status"></div>
+        <div class="mono" id="legend"></div>
+      </div>
+      <div id="uiDock">
+        <div id="materialsBar" aria-label="materials-bar"></div>
+        <div id="rightDock">
+          <div id="settingsBar"><button id="openSettingsBtn">SETTINGS</button></div>
+          <div id="categoryBox" aria-label="category-box"></div>
+        </div>
+      </div>
+      <canvas id="c"></canvas>
+    </main>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
