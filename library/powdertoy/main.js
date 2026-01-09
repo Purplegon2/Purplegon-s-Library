@@ -82,6 +82,8 @@ class Sandbox {
 
     this.materials = structuredClone(DEFAULT_MATERIALS);
     this.materialsById = new Map(this.materials.map(m => [m.id, m]));
+    // name -> material quick lookup (plain object for easy indexing)
+    this.materialsByName = Object.fromEntries(this.materials.map(m => [m.name, m]));
     this.resetTemps();
 
     // color seed / deterministic per-cell noise to keep pixel colors constant
@@ -262,9 +264,11 @@ class Sandbox {
       // Explosive materials: if they exceed explodeTemp (or a chosen threshold), detonate
       if (m && m.explosive && m.explodeTemp != null && t >= m.explodeTemp) {
         const x = i % this.w, y = Math.floor(i / this.w);
+        // optional heat boost immediately before blast
+        this.temp[i] += (m.explodeHeatBoost || 0);
         // convert this cell to Fire and blast
         this.triggerExplosion(x, y, { radius: m.explosionRadius ?? 4, strength: m.explosionStrength ?? 10 });
-        // clear the detonated material
+        // clear the detonated material (become Fire)
         this.mat[i] = this.materials.find(mm => mm.name === 'Fire')?.id ?? id;
         continue;
       }
@@ -1051,6 +1055,19 @@ function buildUI(sim) {
     fields.push(makeField("condenseTemp", "condenseTemp", "number"));
     fields.push(makeField("condenseInto", "condenseInto", "number"));
 
+    // Explosive / burning / misc flags
+    fields.push(makeField("burnable", "burnable", "number"));
+    fields.push(makeField("ignitionTemp", "ignitionTemp", "number"));
+    fields.push(makeField("explosive", "explosive", "number"));
+    fields.push(makeField("explodeTemp", "explodeTemp", "number"));
+    fields.push(makeField("explosionRadius", "explosionRadius", "number"));
+    fields.push(makeField("explosionStrength", "explosionStrength", "number"));
+    fields.push(makeField("explodeHeatBoost", "explodeHeatBoost", "number"));
+    fields.push(makeField("immovable", "immovable", "number"));
+    fields.push(makeField("defaultTemp", "defaultTemp", "number"));
+    fields.push(makeField("category", "category", "text"));
+    fields.push(makeField("short", "short", "text"));
+
     for (const f of fields) {
       const input = f.input;
       if (input.tagName === "SELECT") {
@@ -1086,11 +1103,13 @@ function buildUI(sim) {
         if (["name", "state", "color"].includes(k)) {
           m[k] = v;
         } else {
+          // allow boolean-like flags as 0/1 numbers
           m[k] = Number(v);
         }
       }
       // Rebuild lookup
       sim.materialsById = new Map(sim.materials.map(mm => [mm.id, mm]));
+      sim.materialsByName = Object.fromEntries(sim.materials.map(mm => [mm.name, mm]));
       sim._matRGB = null;
       refreshMatSelect(); // names may have changed
       matSelect.value = String(m.id);
@@ -1169,6 +1188,7 @@ function buildUI(sim) {
   resetBtn.addEventListener("click", () => {
     sim.materials = structuredClone(DEFAULT_MATERIALS);
     sim.materialsById = new Map(sim.materials.map(m => [m.id, m]));
+    sim.materialsByName = Object.fromEntries(sim.materials.map(m => [m.name, m]));
     sim._matRGB = null;
     refreshMatSelect();
     buildEditor(1);
