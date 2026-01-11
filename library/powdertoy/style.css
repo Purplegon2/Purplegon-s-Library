@@ -111,6 +111,19 @@ canvas {
   z-index: 5;
 }
 
+/* Allow pointer events to pass through the UI dock except for actual controls
+   so users can continue painting even when the cursor briefly overlaps the dock. */
+#uiDock { pointer-events: none; }
+/* Interactive controls inside the dock should still accept pointer events */
+.category-btn, .material-pill, .material-btn, #materialsBar input, #categoryBox input, #categoryBox button, #searchFrame, #searchFrame input { pointer-events: auto; }
+
+.search-wrap { display:flex; gap:6px; align-items:center; }
+.category-search { width:140px; padding:4px; border-radius:6px; }
+
+/* Ensure standalone search frame is clickable and floats above materials */
+#searchFrame { pointer-events: auto; z-index: 6; }
+#searchFrame input { pointer-events: auto; }
+
 #materialsBar {
   display: flex;
   gap: 6px;
@@ -119,6 +132,13 @@ canvas {
   background: rgba(0,0,0,0.28);
   border: 1px solid rgba(255,255,255,0.06);
   border-radius: 8px;
+}
+
+/* Small inline label showing the selected material short description */
+#selectedMatShort {
+  pointer-events: auto;
+  color: #e8eefc;
+  min-height: 28px;
 }
 
 #rightDock { display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
