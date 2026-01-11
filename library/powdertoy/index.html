@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Web PowderToy</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* Disable selection while drawing to avoid accidental text selection */
+    .no-select { user-select: none; -webkit-user-select: none; -ms-user-select: none; }
+    /* Prevent touch-driven scrolling on the canvas so finger drawing works on mobile */
+    #c { touch-action: none; -ms-touch-action: none; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <div class="group">
+        <div class="gtitle">Brush</div>
+        <div class="row">
+          <label>Material</label>
+          <select id="matSelect" style="display:none"></select>
+        </div>
+        <div class="row">
+          <label>Size</label>
+          <input id="brushSize" type="range" min="1" max="100" value="5" />
+          <span id="brushSizeVal" class="mono"></span>
+        </div>
+        <div class="row small">
+          <div class="hint">
+            LMB paint • RMB erase • Shift = heat • Alt = cool
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">Simulation</div>
+        <div class="row">
+          <button id="pauseBtn">Pause</button>
+          <button id="stepBtn">Step</button>
+          <button id="clearBtn">Clear</button>
+        </div>
+        <div class="row">
+          <label>Speed</label>
+          <input id="speed" type="range" min="1" max="8" value="1" />
+          <span id="speedVal" class="mono"></span>
+        </div>
+        <div class="row">
+          <label>Gravity</label>
+          <input id="gravity" type="range" min="0" max="200" value="110" />
+          <span id="gravityVal" class="mono"></span>
+        </div>
+        <div class="row">
+          <label>Blast Pressure</label>
+          <input id="blastPressure" type="range" min="0" max="500" value="100" />
+          <span id="blastPressureVal" class="mono"></span>
+        </div>
+        <div class="row">
+          <label>Edge Mode</label>
+          <select id="edgeMode">
+            <option value="walled" selected>Walled</option>
+            <option value="void">Void</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Ambient °C</label>
+          <input id="ambientT" type="number" step="1" value="20" />
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">View</div>
+        <div class="row">
+          <label class="chk"><input id="showTemp" type="checkbox" /> Temperature overlay</label>
+        </div>
+        <div class="row">
+          <label class="chk"><input id="showPressure" type="checkbox" /> Pressure overlay</label>
+        </div>
+        <div class="row">
+          <label>Display Mode</label>
+          <select id="displayMode">
+            <option value="regular">Regular</option>
+            <option value="fancy" selected>Fancy (bloom)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Overlay strength</label>
+          <input id="overlay" type="range" min="0" max="100" value="55" />
+          <span id="overlayVal" class="mono"></span>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">Material settings</div>
+        <div class="row small">
+          <div class="hint">Edit the selected material. Changes apply immediately.</div>
+        </div>
+        <div id="matEditor" class="editor"></div>
+        <div class="row">
+          <button id="exportBtn">Export materials JSON</button>
+          <button id="resetBtn" class="ghost">Reset presets</button>
+        </div>
+        <textarea id="exportBox" spellcheck="false" class="mono" placeholder="Exported JSON appears here (copy/paste)."></textarea>
+      </div>
+
+      <div class="group">
+        <div class="gtitle">Notes</div>
+        <div class="row small">
+          <div class="hint">
+            This is a toy simulation (not physically accurate). Pressure is a derived field from gas concentration and diffusion; temperature diffuses and drives phase changes.
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main id="stage">
+      <div id="topbar">
+        <div class="mono" id="status"></div>
+        <div class="mono" id="legend"></div>
+      </div>
+      <div id="uiDock">
+        <div id="leftDock" style="display:flex; flex-direction:column; gap:6px;">
+          <div id="selectedMatShort"
+            style="display:flex; text-align:right; padding:6px 10px; border-radius:6px;
+                  background: rgba(0,0,0,0.22); border:1px solid rgba(255,255,255,0.06);
+                  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                  font-size:12px; min-width:64px;">
+          </div>
+
+          <div id="materialsBar" aria-label="materials-bar"></div>
+        </div>
+
+        <div id="searchFrame" class="search-frame"
+            style="display:none; align-items:center; padding:6px;">
+          <input id="searchFilter" type="text" placeholder="Search materials..."
+            style="width:100px; padding:6px; border-radius:6px;
+                  border:1px solid rgba(255,255,255,0.08);
+                  background:rgba(0,0,0,0.28); color:inherit;" />
+        </div>
+
+        <div id="rightDock">
+          <div id="settingsBar"><button id="openSettingsBtn">SETTINGS</button></div>
+          <div id="categoryBox" aria-label="category-box"></div>
+        </div>
+      </div>
+      <canvas id="c"></canvas>
+    </main>
+  </div>
+
+  <script type="module" src="main.js"></script>
+  <script>
+    (function(){
+      const canvas = document.getElementById('c');
+      if (!canvas) return;
+
+      // When pointer is down on canvas, disable text selection on the page
+      const enableNoSelect = () => document.body.classList.add('no-select');
+      const disableNoSelect = () => document.body.classList.remove('no-select');
+
+      // Pointer events: preferred
+      canvas.addEventListener('pointerdown', (e) => { enableNoSelect(); }, { passive: true });
+      window.addEventListener('pointerup', () => { disableNoSelect(); }, { passive: true });
+      canvas.addEventListener('pointercancel', () => { disableNoSelect(); }, { passive: true });
+
+      // Touch fallback: prevent touchmove default to stop page scrolling while drawing
+      canvas.addEventListener('touchstart', (e) => { enableNoSelect(); }, { passive: true });
+      canvas.addEventListener('touchend', (e) => { disableNoSelect(); }, { passive: true });
+      canvas.addEventListener('touchcancel', (e) => { disableNoSelect(); }, { passive: true });
+      canvas.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+
+      // Also prevent accidental text selection if mouse is used (desktop drag into UI)
+      canvas.addEventListener('mousedown', enableNoSelect);
+      window.addEventListener('mouseup', disableNoSelect);
+    })();
+  </script>
+</body>
+</html>

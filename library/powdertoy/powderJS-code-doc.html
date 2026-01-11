@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>powderJS — Scripting & Materials (mini‑doc)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;line-height:1.4;padding:18px;color:#111;background:#fff}
+    h1,h2{margin:8px 0}
+    /* Dark code blocks for reliable contrast in all themes */
+    pre{
+      background:#0b0b0b;
+      color:#dff;
+      padding:10px;
+      border-radius:4px;
+      overflow:auto;
+      font-family:ui-monospace,monospace;
+      font-size:13px;
+      line-height:1.45;
+    }
+    /* Inline code uses a subtle light-gray block but enforces readable text color */
+    code{
+      background:#f4f4f4;
+      color:#111;
+      padding:2px 6px;
+      border-radius:3px;
+      font-family:ui-monospace,monospace;
+      font-size:12px;
+    }
+    /* When code appears inside pre, make it inherit the pre's colors */
+    pre code { background: transparent; color: inherit; padding:0; border-radius:0; }
+    section{margin:12px 0}
+    ul{margin:6px 0 6px 20px}
+    small{color:#444}
+  </style>
+</head>
+<body>
+  <h1>powderJS — Scripting & Materials (quick reference)</h1>
+
+  <section>
+    <h2>Materials — adding / fields</h2>
+    <p>Add a material object to the material arrays (grouped lists). Use human names for transforms (IDs are auto-assigned at load by <code>buildMaterialsTable()</code>).</p>
+    <pre><code>{
+  name: "MyMetal",
+  short: "METL",            // 4 chars shown in UI
+  state: "solid",           // "solid" | "liquid" | "gas" (physical behaviour)
+  category: "solid",        // UI grouping (optional)
+  color: "#aabbcc",         // base color (hex)
+  colorVar: 0.06,           // per-cell jitter (0..1)
+  density: 7.8,
+  conductivity: 0.7,
+  heatCapacity: 0.5,
+  defaultTemp: 20,          // applied when painted (optional)
+  immovable: true,          // prevents displacement
+  nuclear: false,           // flag for nuclear rules (optional)
+  burnable: true,
+  ignitionTemp: 300
+}</code></pre>
+    <p>Important transform fields (use material name strings): <code>meltInto</code>, <code>freezeInto</code>, <code>boilInto</code>, <code>condenseInto</code>, <code>decayInto</code>.</p>
+  </section>
+
+  <section>
+    <h2>Scripting API (per-material)</h2>
+    <p>Materials may include a <code>script</code> string and scheduling fields. Scripts compile once and run with <code>this</code> bound to the cell object when executed.</p>
+
+    <pre><code>{
+  name: "Acid",
+  state: "liquid",
+  script: `
+    // 'this' is the current cell object
+    // canvas and game objects are provided as globals to the script
+    const parts = canvas.find_particles(this.x, this.y, 1, null, 32);
+    for (const p of parts) {
+      if (p.x===this.x && p.y===this.y) continue;
+      if (!p.matId) continue;
+      if (p.matId === this.mat.id) continue;
+      // skip hot materials
+      if ((p.temp||20) > 100) continue;
+      canvas.set(p.x, p.y, 'Air');   // immediate change scheduled
+      this.temp = (this.temp||20) + 30;
+    }
+  `,
+  scriptInterval: 6,   // ticks between executions (1 = every step)
+  scriptParams: {}
+}</code></pre>
+
+    <h3>Exposed objects / functions inside scripts</h3>
+    <ul>
+      <li><code>this</code>: cell context — fields include <code>x,y,matId,temp,pressure,mat</code> (mat is material descriptor)</li>
+      <li><code>canvas.get(x,y)</code> → {x,y,matId,temp,pressure} or null</li>
+      <li><code>canvas.set(x,y, "Air" | "MyMat" | id)</code> — schedule cell replacement</li>
+      <li><code>canvas.replace_particle(pos, materialNameOrId)</code> — helper to swap a particle</li>
+      <li><code>canvas.find_particles(cx,cy,r,filter,limit)</code> — returns neighbor particle objects</li>
+      <li><code>canvas.forEachNeighbor(x,y,fn)</code> — iterate 8 neighbors</li>
+      <li><code>game.getMat(name)</code> — material descriptor</li>
+      <li><code>game.spawnEntity(type, x,y, params)</code> — spawn an entity</li>
+      <li><code>game.triggerExplosion(x,y, opts )</code> — helper explosion</li>
+      <li><code>helpers.rand(), helpers.randint(a,b)</code> — small helpers</li>
+    </ul>
+
+    <p>Scripts run inside try/catch. Use <code>scriptInterval</code> to throttle; heavy scripts can kill frame-rate.</p>
+  </section>
+
+  <section>
+    <h2>Script scheduling & safety</h2>
+    <ul>
+      <li><code>scriptInterval</code>: integer ticks between runs (default: material-specific or higher value for expensive scripts).</li>
+      <li><code>sampleRate</code> (optional): probability 0..1 to run when interval hits.</li>
+      <li>Scripts are sandboxed to the provided helpers and the cell <code>this</code>. Avoid infinite loops and expensive global scans.</li>
+      <li>All writes via <code>canvas.set</code> and helpers are batched and committed after the script pass.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Thermal / painting notes</h2>
+    <ul>
+      <li>When painted, a material's <code>defaultTemp</code> (if present) is applied to the spawned pixels.</li>
+      <li>Temperature and pressure are tracked per-cell and follow particle movement (moves transfer cell temp/pressure).</li>
+      <li>Use <code>burnable</code> + <code>ignitionTemp</code> to enable automatic fire conversion.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Nuclear & entity notes</h2>
+    <ul>
+      <li>Set <code>entity: true</code> and <code>behavior</code> to create moving entities (e.g., Neutron). Entities do not occupy a persistent grid tile unless explicitly placed.</li>
+      <li>Set <code>nuclear: true</code> plus fission properties (<code>fissionOnNeutron</code>, <code>criticalTemp</code>, <code>fissionYield</code>) to enable fission behavior.</li>
+      <li>Materials can be marked <code>neutronAbsorber</code> or <code>neutronReflector</code> to change neutron interactions.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Developer tips</h2>
+    <ul>
+      <li>Reload the page after editing <code>materials.js</code> (or use the UI Reset) so new materials/scripts compile.</li>
+      <li>Prefer short-range operations and batched writes in scripts. Use <code>scriptInterval</code> = 8..30 for expensive logic.</li>
+      <li>Use <code>game.getMat("Air")</code> to resolve names; transforms must refer to material names, not numeric ids.</li>
+    </ul>
+  </section>
+
+  <hr/>
+  <small>Location: <code>d:\small_projects\powdertoy_sim\materials.js</code> — scripts compiled at Sandbox startup via <code>buildMaterialsTable()</code> &amp; runtime <code>compileMaterialScripts()</code>.</small>
+</body>
+</html>
