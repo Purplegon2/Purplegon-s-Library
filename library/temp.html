@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Color Name Picker</title>
+  <style>
+    body{
+      margin:0;
+      background:#ffffff;
+      color:#000000;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    .wrap{
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+      gap:18px;
+    }
+    .instructions{
+      font-size:14px;
+      line-height:1.35;
+      max-width: 820px;
+      text-align:center;
+    }
+    .name{
+      font-size: clamp(44px, 7vw, 96px);
+      font-weight: 800;
+      line-height: 1.02;
+      text-align:center;
+      margin: 0;
+      word-break: break-word;
+      transition: color 1200ms ease; /* smooth transition to the correct color */
+    }
+    .controls{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:14px;
+      flex-wrap:wrap;
+    }
+    input[type="color"]{
+      width: 96px;
+      height: 64px;
+      border: 1px solid #000;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    button{
+      border:1px solid #000;
+      background:#fff;
+      color:#000;
+      padding: 12px 16px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    button:disabled{
+      opacity:0.5;
+      cursor:not-allowed;
+    }
+    #nextBtn{ display:none; }
+    .mono{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+    .score{
+      font-size: 18px;
+      margin-top: 4px;
+      height: 28px; /* keeps layout stable */
+    }
+    .score strong{
+      font-size: 28px;
+      font-weight: 900;
+    }
+    .status{
+      font-size: 12px;
+      opacity: 0.75;
+      height: 18px; /* keeps layout stable */
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="instructions">
+      Pick the color you think matches the name. Submit to reveal the real color and get a 0–100 score.
+    </div>
+
+    <h1 id="colorName" class="name">—</h1>
+
+    <div class="controls">
+      <input id="picker" type="color" value="#7a5cff" aria-label="Pick a color" />
+      <button id="submitBtn">Submit</button>
+      <button id="nextBtn">Next</button>
+    </div>
+
+    <div class="mono" id="hexReadout">#7A5CFF</div>
+    <div class="score" id="scoreLine"></div>
+    <div class="status" id="statusLine"></div>
+  </div>
+
+  <script>
+    function timeBucketSeedMs(bucketSeconds = 5) {
+      const now = Date.now();
+      const bucketMs = bucketSeconds * 1000;
+      const bucketStart = Math.floor(now / bucketMs) * bucketMs;
+      // Convert to a 32-bit unsigned integer seed
+      return (bucketStart >>> 0);
+    }
+
+    // Mulberry32: small, fast 32-bit PRNG
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function seededHexColor(rng) {
+      const n = Math.floor(rng() * 0x1000000); // 0..0xFFFFFF
+      return ("#" + n.toString(16).padStart(6, "0")).toUpperCase();
+    }
+
+    const FALLBACK_COLORS = [
+      { name: "man my code failed ):", hex: "#FF0000" },
+    ];
+
+    const elName = document.getElementById("colorName");
+    const picker = document.getElementById("picker");
+    const submitBtn = document.getElementById("submitBtn");
+    const nextBtn = document.getElementById("nextBtn");
+    const hexReadout = document.getElementById("hexReadout");
+    const scoreLine = document.getElementById("scoreLine");
+    const statusLine = document.getElementById("statusLine");
+
+    let current = null;
+    let locked = false;
+
+    function normalizeHex(h) {
+      const raw = String(h || "").trim();
+      if (!raw) return "#000000";
+      const x = raw.startsWith("#") ? raw : ("#" + raw);
+      const s = x.slice(0, 7);
+      return ("#" + s.slice(1).padEnd(6, "0")).toUpperCase();
+    }
+
+    function hexToRgb(hex) {
+      const h = normalizeHex(hex).replace("#", "");
+      const n = parseInt(h, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+
+    function clamp01(x) {
+      return Math.max(0, Math.min(1, x));
+    }
+
+    function computeScore(userHex, actualHex) {
+      const u = hexToRgb(userHex);
+      const a = hexToRgb(actualHex);
+      const dr = u.r - a.r, dg = u.g - a.g, db = u.b - a.b;
+      const dist = Math.sqrt(dr*dr + dg*dg + db*db);
+      const maxDist = Math.sqrt(255*255*3);
+      const similarity = 1 - (dist / maxDist);
+      return Math.round(100 * clamp01(similarity));
+    }
+
+    function applyPickerVisuals(hex) {
+      const H = normalizeHex(hex);
+      hexReadout.textContent = H;
+      elName.style.color = H; // chosen color while editing
+    }
+
+    function animateScoreTick(targetScore, onDone) {
+      scoreLine.innerHTML = "Score: <strong>0</strong> / 100";
+      const strong = scoreLine.querySelector("strong");
+
+      const start = performance.now();
+      const duration = 900 + Math.min(900, targetScore * 10);
+
+      function easeOutCubic(t) {
+        return 1 - Math.pow(1 - t, 3);
+      }
+
+      function frame(now) {
+        const t = clamp01((now - start) / duration);
+        const v = Math.round(easeOutCubic(t) * targetScore);
+        strong.textContent = String(v);
+
+        if (t < 1) requestAnimationFrame(frame);
+        else {
+          strong.textContent = String(targetScore);
+          onDone?.();
+        }
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function resetRoundUi() {
+      locked = false;
+      scoreLine.textContent = "";
+      submitBtn.disabled = false;
+      nextBtn.style.display = "none";
+      nextBtn.disabled = true;
+      applyPickerVisuals(picker.value);
+    }
+
+    async function fetchRandomOnlineColor() {
+      // Seed changes every 5 seconds
+      const seed = timeBucketSeedMs(5);
+      const rng = mulberry32(seed);
+
+      // Deterministic "random" hex for this 5-second interval
+      const hex = seededHexColor(rng);
+
+      const url = "https://www.thecolorapi.com/id?hex=" + hex.slice(1);
+
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("Fetch failed: " + res.status);
+
+      const data = await res.json();
+      const name = data?.name?.value;
+      const value = data?.hex?.value;
+
+      if (!name || !value) throw new Error("Bad API response");
+      return { name, hex: value };
+    }
+
+    function pickFallbackRound() {
+      return FALLBACK_COLORS[Math.floor(Math.random() * FALLBACK_COLORS.length)];
+    }
+
+    async function pickRound() {
+      current = null;
+      resetRoundUi();
+
+      statusLine.textContent = "Loading online color...";
+      submitBtn.disabled = true;
+
+      try {
+        current = await fetchRandomOnlineColor();
+        statusLine.textContent = "Online color loaded.";
+      } catch (e) {
+        current = pickFallbackRound();
+        statusLine.textContent = "Online fetch failed; using fallback list.";
+      }
+
+      elName.textContent = current.name;
+      submitBtn.disabled = false;
+    }
+
+    picker.addEventListener("input", (e) => {
+      if (locked) return;
+      applyPickerVisuals(e.target.value);
+    });
+
+    submitBtn.addEventListener("click", () => {
+      if (!current || locked) return;
+      locked = true;
+
+      submitBtn.disabled = true;
+      nextBtn.style.display = "none";
+      nextBtn.disabled = true;
+
+      const user = normalizeHex(picker.value);
+      const actual = normalizeHex(current.hex);
+      const score = computeScore(user, actual);
+
+      // Reveal: transition text color to correct color
+      elName.style.color = actual;
+
+      animateScoreTick(score, () => {
+        nextBtn.style.display = "inline-block";
+        nextBtn.disabled = false;
+      });
+    });
+
+    nextBtn.addEventListener("click", () => {
+      pickRound();
+    });
+
+    pickRound();
+  </script>
+</body>
+</html>
